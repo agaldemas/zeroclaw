@@ -247,3 +247,98 @@ When modifying docs, follow `docs/i18n-guide.md`:
 - Keeping strings in English ensures consistency across the codebase
 - Facilitates contributions from international developers
 - Makes debugging and code review easier
+
+## Debugging Rule #1: Check Config First
+
+Before modifying ANY code to fix an issue, ALWAYS check if the behavior is configurable first.
+
+ZeroClaw has extensive configuration options in `config.toml`. Many behaviors that seem like bugs can be solved by config changes instead of code changes.
+
+### How to Apply
+
+1. **Check the actual config** - Review the user's config file:
+   ```
+   /Users/alaingaldemas/.zeroclaw/config.toml
+   ```
+
+2. **Search the config schema** - Look at `src/config/schema.rs` for available options:
+   ```bash
+   grep -n "outbound_leak_guard\|sensitivity\|guard" src/config/schema.rs
+   ```
+
+3. **Check the docs** - ZeroClaw has rich documentation in `docs/`:
+   - `docs/config-reference.md` - Full config reference
+   - `docs/troubleshooting.md` - Common issues
+   - `docs/channels-reference.md` - Channel-specific config
+   - `docs/commands-reference.md` - CLI commands
+
+4. **Only then consider code changes** - If no config option exists, THEN consider a code fix.
+
+### Recent Example (What NOT To Do)
+
+**Problem:** Image generation output was being redacted by security guardrail.
+
+**Wrong approach:** Modify `src/security/leak_detector.rs` to change behavior.
+
+**Correct approach:** Set in config.toml:
+```toml
+[security.outbound_leak_guard]
+enabled = false
+```
+
+### Common Configurable Behaviors
+
+- `security.outbound_leak_guard.sensitivity` - Controls credential leak detection (0.0-1.0)
+- `security.semantic_guard` - Controls AI safety filtering
+- `autonomy.level` - Controls agent autonomy (read_only, supervised, full)
+- `[channel].stream_mode` - Controls message streaming
+- `security.perplexity_filter.enable_perplexity_filter` - Adversarial prompt filtering
+
+## Debugging Rule #2: Check The Docs
+
+ZeroClaw has extensive documentation. BEFORE proposing any fix or claiming something doesn't exist, search the docs.
+
+### Required Doc Searches
+
+When debugging an issue, you MUST check:
+
+1. **Config reference** - `docs/config-reference.md`
+   - Search for keywords related to the issue
+   - Check if the feature has config options
+
+2. **Troubleshooting** - `docs/troubleshooting.md`
+   - Common failure modes are documented
+   - Look for similar symptoms
+
+3. **Channels/Providers reference** - `docs/channels-reference.md`, `docs/providers-reference.md`
+   - Channel-specific configuration
+   - Provider quirks and requirements
+
+4. **Commands reference** - `docs/commands-reference.md`
+   - CLI options that might solve the problem
+
+### Example: "This security feature can't be disabled"
+
+WRONG: "Let me modify the code to add a config option."
+
+CORRECT: Check `docs/config-reference.md` for `[security.outbound_leak_guard]` which has `enabled` and `sensitivity` keys.
+
+### Key Docs Files to Know
+
+| Doc | Purpose |
+|-----|----------|
+| `docs/config-reference.md` | All config keys with defaults |
+| `docs/troubleshooting.md` | Common issues and solutions |
+| `docs/commands-reference.md` | CLI command reference |
+| `docs/channels-reference.md` | Channel setup guides |
+| `docs/providers-reference.md` | Provider configuration |
+| `docs/operations-runbook.md` | Day-2 operations |
+
+## Anti-Pattern: "Let me check the code first"
+
+This is PROHIBITED unless:
+1. Config option doesn't exist AND
+2. Documentation confirms it doesn't exist AND
+3. User explicitly requests a code change
+
+Always config-first, code-second.
