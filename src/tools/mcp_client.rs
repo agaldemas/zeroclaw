@@ -91,7 +91,6 @@ impl McpServer {
         }
 
         // Notify server that client is initialized (no response expected for notifications)
-        // For notifications, we send but don't wait for response
         let notif = JsonRpcRequest::notification("notifications/initialized", json!({}));
         // Best effort - ignore errors for notifications
         let _ = transport.send_and_recv(&notif).await;
@@ -144,6 +143,7 @@ impl McpServer {
     }
 
     /// Server display name.
+    #[allow(dead_code)]
     pub async fn name(&self) -> String {
         self.inner.lock().await.config.name.clone()
     }
@@ -201,7 +201,7 @@ impl McpServer {
 /// Registry of all connected MCP servers, with a flat tool index.
 pub struct McpRegistry {
     servers: Vec<McpServer>,
-    /// prefixed_name → (server_index, original_tool_name)
+    /// prefixed_name -> (server_index, original_tool_name)
     tool_index: HashMap<String, (usize, String)>,
 }
 
@@ -301,11 +301,11 @@ mod tests {
             name: "nonexistent".to_string(),
             command: "/usr/bin/this_binary_does_not_exist_zeroclaw_test".to_string(),
             args: vec![],
-            env: std::collections::HashMap::default(),
+            env: HashMap::default(),
             tool_timeout_secs: None,
             transport: McpTransport::Stdio,
             url: None,
-            headers: std::collections::HashMap::default(),
+            headers: HashMap::default(),
         };
         let result = McpServer::connect(config).await;
         assert!(result.is_err());
@@ -320,11 +320,11 @@ mod tests {
             name: "bad".to_string(),
             command: "/usr/bin/does_not_exist_zc_test".to_string(),
             args: vec![],
-            env: std::collections::HashMap::default(),
+            env: HashMap::default(),
             tool_timeout_secs: None,
             transport: McpTransport::Stdio,
             url: None,
-            headers: std::collections::HashMap::default(),
+            headers: HashMap::default(),
         }];
         let registry = McpRegistry::connect_all(&configs)
             .await

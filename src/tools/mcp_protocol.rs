@@ -10,13 +10,17 @@ pub const JSONRPC_VERSION: &str = "2.0";
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 
 // Standard JSON-RPC 2.0 error codes
+#[allow(dead_code)]
 pub const PARSE_ERROR: i32 = -32700;
+#[allow(dead_code)]
 pub const INVALID_REQUEST: i32 = -32600;
+#[allow(dead_code)]
 pub const METHOD_NOT_FOUND: i32 = -32601;
+#[allow(dead_code)]
 pub const INVALID_PARAMS: i32 = -32602;
 pub const INTERNAL_ERROR: i32 = -32603;
 
-/// Outbound JSON-RPC request (client → MCP server).
+/// Outbound JSON-RPC request (client -> MCP server).
 /// Used for both method calls (with id) and notifications (id = None).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
@@ -50,7 +54,7 @@ impl JsonRpcRequest {
     }
 }
 
-/// Inbound JSON-RPC response (MCP server → client).
+/// Inbound JSON-RPC response (MCP server -> client).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,

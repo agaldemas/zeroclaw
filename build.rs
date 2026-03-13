@@ -1,80 +1,110 @@
-use std::env;
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::Command;
 
-fn git_short_sha(manifest_dir: &str) -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(manifest_dir)
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let short_sha = String::from_utf8(output.stdout).ok()?;
-    let trimmed = short_sha.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn emit_git_rerun_hints(manifest_dir: &str) {
-    let output = Command::new("git")
-        .args(["rev-parse", "--git-dir"])
-        .current_dir(manifest_dir)
-        .output();
-
-    let Ok(output) = output else {
-        return;
-    };
-    if !output.status.success() {
-        return;
-    }
-
-    let Ok(git_dir_raw) = String::from_utf8(output.stdout) else {
-        return;
-    };
-    let git_dir_raw = git_dir_raw.trim();
-    if git_dir_raw.is_empty() {
-        return;
-    }
-
-    let git_dir = if PathBuf::from(git_dir_raw).is_absolute() {
-        PathBuf::from(git_dir_raw)
-    } else {
-        PathBuf::from(manifest_dir).join(git_dir_raw)
-    };
-
-    println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
-    println!("cargo:rerun-if-changed={}", git_dir.join("refs").display());
-}
-
 fn main() {
-    println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-env-changed=ZEROCLAW_GIT_SHORT_SHA");
+    let dist_dir = Path::new("web/dist");
+    let web_dir = Path::new("web");
 
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-    emit_git_rerun_hints(&manifest_dir);
+    // Tell Cargo to re-run this script when web source files change.
+    println!("cargo:rerun-if-changed=web/src");
+    println!("cargo:rerun-if-changed=web/index.html");
+    println!("cargo:rerun-if-changed=web/package.json");
+    println!("cargo:rerun-if-changed=web/vite.config.ts");
 
-    let package_version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".to_string());
-    let short_sha = env::var("ZEROCLAW_GIT_SHORT_SHA")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| git_short_sha(&manifest_dir));
+    // Attempt to build the web frontend if npm is available and web/dist is
+    // missing or stale.  The build is best-effort: when Node.js is not
+    // installed (e.g. CI containers, cross-compilation, minimal dev setups)
+    // we fall back to the existing stub/empty dist directory so the Rust
+    // build still succeeds.
+    let needs_build = !dist_dir.join("index.html").exists();
 
-    let build_version = if let Some(sha) = short_sha.as_deref() {
-        format!("{package_version} ({sha})")
+    if needs_build && web_dir.join("package.json").exists() {
+        if let Ok(npm) = which_npm() {
+            eprintln!("cargo:warning=Building web frontend (web/dist is missing or stale)...");
+
+            // npm ci / npm install
+            let install_status = Command::new(&npm)
+                .args(["ci", "--ignore-scripts"])
+                .current_dir(web_dir)
+                .status();
+
+            match install_status {
+                Ok(s) if s.success() => {}
+                Ok(s) => {
+                    // Fall back to `npm install` if `npm ci` fails (no lockfile, etc.)
+                    eprintln!("cargo:warning=npm ci exited with {s}, trying npm install...");
+                    let fallback = Command::new(&npm)
+                        .args(["install"])
+                        .current_dir(web_dir)
+                        .status();
+                    if !matches!(fallback, Ok(s) if s.success()) {
+                        eprintln!("cargo:warning=npm install failed — skipping web build");
+                        ensure_dist_dir(dist_dir);
+                        return;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("cargo:warning=Could not run npm: {e} — skipping web build");
+                    ensure_dist_dir(dist_dir);
+                    return;
+                }
+            }
+
+            // npm run build
+            let build_status = Command::new(&npm)
+                .args(["run", "build"])
+                .current_dir(web_dir)
+                .status();
+
+            match build_status {
+                Ok(s) if s.success() => {
+                    eprintln!("cargo:warning=Web frontend built successfully.");
+                }
+                Ok(s) => {
+                    eprintln!(
+                        "cargo:warning=npm run build exited with {s} — web dashboard may be unavailable"
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "cargo:warning=Could not run npm build: {e} — web dashboard may be unavailable"
+                    );
+                }
+            }
+        }
+    }
+
+    ensure_dist_dir(dist_dir);
+}
+
+/// Ensure the dist directory exists so `rust-embed` does not fail at compile
+/// time even when the web frontend is not built.
+fn ensure_dist_dir(dist_dir: &Path) {
+    if !dist_dir.exists() {
+        std::fs::create_dir_all(dist_dir).expect("failed to create web/dist/");
+    }
+}
+
+/// Locate the `npm` binary on the system PATH.
+fn which_npm() -> Result<String, ()> {
+    let cmd = if cfg!(target_os = "windows") {
+        "where"
     } else {
-        package_version
+        "which"
     };
 
-    println!("cargo:rustc-env=ZEROCLAW_BUILD_VERSION={build_version}");
-    println!(
-        "cargo:rustc-env=ZEROCLAW_GIT_SHORT_SHA={}",
-        short_sha.unwrap_or_default()
-    );
+    Command::new(cmd)
+        .arg("npm")
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                String::from_utf8(output.stdout)
+                    .ok()
+                    .map(|s| s.lines().next().unwrap_or("npm").trim().to_string())
+            } else {
+                None
+            }
+        })
+        .ok_or(())
 }
