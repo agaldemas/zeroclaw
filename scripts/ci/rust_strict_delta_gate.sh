@@ -5,40 +5,8 @@ set -euo pipefail
 BASE_SHA="${BASE_SHA:-}"
 RUST_FILES_RAW="${RUST_FILES:-}"
 
-ensure_toolchain_bin_on_path() {
-    local toolchain_bin=""
-
-    if [ -n "${CARGO:-}" ]; then
-        toolchain_bin="$(dirname "${CARGO}")"
-    elif [ -n "${RUSTC:-}" ]; then
-        toolchain_bin="$(dirname "${RUSTC}")"
-    fi
-
-    if [ -z "$toolchain_bin" ] || [ ! -d "$toolchain_bin" ]; then
-        return 0
-    fi
-
-    case ":$PATH:" in
-        *":${toolchain_bin}:"*) ;;
-        *) export PATH="${toolchain_bin}:$PATH" ;;
-    esac
-}
-
-run_cargo_tool() {
-    local subcommand="$1"
-    shift
-
-    if [ -n "${RUSTUP_TOOLCHAIN:-}" ] && command -v rustup >/dev/null 2>&1; then
-        rustup run "${RUSTUP_TOOLCHAIN}" cargo "$subcommand" "$@"
-    else
-        cargo "$subcommand" "$@"
-    fi
-}
-
-ensure_toolchain_bin_on_path
-
-if [ -z "$BASE_SHA" ] && git rev-parse --verify origin/main >/dev/null 2>&1; then
-    BASE_SHA="$(git merge-base origin/main HEAD)"
+if [ -z "$BASE_SHA" ] && git rev-parse --verify origin/master >/dev/null 2>&1; then
+    BASE_SHA="$(git merge-base origin/master HEAD)"
 fi
 
 if [ -z "$BASE_SHA" ] && git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
@@ -47,7 +15,7 @@ fi
 
 if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
     echo "BASE_SHA is missing or invalid for strict delta gate."
-    echo "Set BASE_SHA explicitly or ensure origin/main is available."
+    echo "Set BASE_SHA explicitly or ensure origin/master is available."
     exit 1
 fi
 
@@ -120,7 +88,7 @@ print(json.dumps(changed))
 PY
 
 set +e
-run_cargo_tool clippy --quiet --locked --all-targets --message-format=json -- -D warnings >"$CLIPPY_JSON_FILE" 2>"$CLIPPY_STDERR_FILE"
+cargo clippy --quiet --locked --all-targets --message-format=json -- -D warnings >"$CLIPPY_JSON_FILE" 2>"$CLIPPY_STDERR_FILE"
 CLIPPY_EXIT=$?
 set -e
 

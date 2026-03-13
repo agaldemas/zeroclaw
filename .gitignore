@@ -1,7 +1,6 @@
 /target
-/target_ci
-/target_review*
 firmware/*/target
+web/dist/
 *.db
 *.db-journal
 .DS_Store
@@ -10,13 +9,6 @@ firmware/*/target
 __pycache__/
 *.pyc
 docker-compose.override.yml
-site/node_modules/
-site/.vite/
-site/public/docs-content/
-gh-pages/
-
-.idea
-.claude
 
 # Environment files (may contain secrets)
 .env
@@ -34,13 +26,19 @@ venv/
 
 # Secret keys and credentials
 .secret_key
-otp-secret
 *.key
 *.pem
 credentials.json
-/config.toml
 .worktrees/
+.zeroclaw/*
 
-# Nix
-result
+# Skill eval workspaces (test outputs, transcripts, grading)
+.claude/skills/*-workspace/
+
+# Local state backups
+.local-state-backups/
+*.local-state-backup/
+
+# Coverage artifacts
+lcov.info
 logs/

@@ -67,37 +67,9 @@ pub struct EmailConfig {
     /// Allowed sender addresses/domains (empty = deny all, ["*"] = allow all)
     #[serde(default)]
     pub allowed_senders: Vec<String>,
-    /// Optional IMAP ID extension (RFC 2971) client identification.
-    #[serde(default)]
-    pub imap_id: EmailImapIdConfig,
-}
-
-/// IMAP ID extension metadata (RFC 2971)
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct EmailImapIdConfig {
-    /// Send IMAP `ID` command after login (recommended for some providers such as NetEase).
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    /// Client application name
-    #[serde(default = "default_imap_id_name")]
-    pub name: String,
-    /// Client application version
-    #[serde(default = "default_imap_id_version")]
-    pub version: String,
-    /// Client vendor name
-    #[serde(default = "default_imap_id_vendor")]
-    pub vendor: String,
-}
-
-impl Default for EmailImapIdConfig {
-    fn default() -> Self {
-        Self {
-            enabled: default_true(),
-            name: default_imap_id_name(),
-            version: default_imap_id_version(),
-            vendor: default_imap_id_vendor(),
-        }
-    }
+    /// Default subject line for outgoing emails (default: "ZeroClaw Message")
+    #[serde(default = "default_subject")]
+    pub default_subject: String,
 }
 
 impl crate::config::traits::ChannelConfig for EmailConfig {
@@ -124,14 +96,8 @@ fn default_idle_timeout() -> u64 {
 fn default_true() -> bool {
     true
 }
-fn default_imap_id_name() -> String {
-    "zeroclaw".into()
-}
-fn default_imap_id_version() -> String {
-    env!("CARGO_PKG_VERSION").into()
-}
-fn default_imap_id_vendor() -> String {
-    "zeroclaw-labs".into()
+fn default_subject() -> String {
+    "ZeroClaw Message".into()
 }
 
 impl Default for EmailConfig {
@@ -148,7 +114,7 @@ impl Default for EmailConfig {
             from_address: String::new(),
             idle_timeout_secs: default_idle_timeout(),
             allowed_senders: Vec::new(),
-            imap_id: EmailImapIdConfig::default(),
+            default_subject: default_subject(),
         }
     }
 }
@@ -269,52 +235,13 @@ impl EmailChannel {
         let client = async_imap::Client::new(stream);
 
         // Login
-        let mut session = client
+        let session = client
             .login(&self.config.username, &self.config.password)
             .await
             .map_err(|(e, _)| anyhow!("IMAP login failed: {}", e))?;
 
         debug!("IMAP login successful");
-        self.send_imap_id(&mut session).await;
         Ok(session)
-    }
-
-    /// Send RFC 2971 IMAP ID extension metadata.
-    /// Any ID errors are non-fatal to keep compatibility with providers
-    /// that do not support the extension.
-    async fn send_imap_id(&self, session: &mut ImapSession) {
-        if !self.config.imap_id.enabled {
-            debug!("IMAP ID extension disabled by configuration");
-            return;
-        }
-
-        let name = self.config.imap_id.name.trim();
-        let version = self.config.imap_id.version.trim();
-        let vendor = self.config.imap_id.vendor.trim();
-
-        let mut identification: Vec<(&str, Option<&str>)> = Vec::new();
-        if !name.is_empty() {
-            identification.push(("name", Some(name)));
-        }
-        if !version.is_empty() {
-            identification.push(("version", Some(version)));
-        }
-        if !vendor.is_empty() {
-            identification.push(("vendor", Some(vendor)));
-        }
-
-        if identification.is_empty() {
-            debug!("IMAP ID extension enabled but no identification fields configured");
-            return;
-        }
-
-        match session.id(identification).await {
-            Ok(_) => debug!("IMAP ID extension sent successfully"),
-            Err(err) => warn!(
-                "IMAP ID extension failed (continuing without ID metadata): {}",
-                err
-            ),
-        }
     }
 
     /// Fetch and process unseen messages from the selected mailbox
@@ -592,16 +519,17 @@ impl Channel for EmailChannel {
 
     async fn send(&self, message: &SendMessage) -> Result<()> {
         // Use explicit subject if provided, otherwise fall back to legacy parsing or default
+        let default_subject = self.config.default_subject.as_str();
         let (subject, body) = if let Some(ref subj) = message.subject {
             (subj.as_str(), message.content.as_str())
         } else if message.content.starts_with("Subject: ") {
             if let Some(pos) = message.content.find('\n') {
                 (&message.content[9..pos], message.content[pos + 1..].trim())
             } else {
-                ("ZeroClaw Message", message.content.as_str())
+                (default_subject, message.content.as_str())
             }
         } else {
-            ("ZeroClaw Message", message.content.as_str())
+            (default_subject, message.content.as_str())
         };
 
         let email = Message::builder()
@@ -699,10 +627,6 @@ mod tests {
         assert_eq!(config.from_address, "");
         assert_eq!(config.idle_timeout_secs, 1740);
         assert!(config.allowed_senders.is_empty());
-        assert!(config.imap_id.enabled);
-        assert_eq!(config.imap_id.name, "zeroclaw");
-        assert_eq!(config.imap_id.version, env!("CARGO_PKG_VERSION"));
-        assert_eq!(config.imap_id.vendor, "zeroclaw-labs");
     }
 
     #[test]
@@ -719,11 +643,12 @@ mod tests {
             from_address: "bot@example.com".to_string(),
             idle_timeout_secs: 1200,
             allowed_senders: vec!["allowed@example.com".to_string()],
-            imap_id: EmailImapIdConfig::default(),
+            default_subject: "Custom Subject".to_string(),
         };
         assert_eq!(config.imap_host, "imap.example.com");
         assert_eq!(config.imap_folder, "Archive");
         assert_eq!(config.idle_timeout_secs, 1200);
+        assert_eq!(config.default_subject, "Custom Subject");
     }
 
     #[test]
@@ -740,12 +665,13 @@ mod tests {
             from_address: "bot@test.com".to_string(),
             idle_timeout_secs: 1740,
             allowed_senders: vec!["*".to_string()],
-            imap_id: EmailImapIdConfig::default(),
+            default_subject: "Test Subject".to_string(),
         };
         let cloned = config.clone();
         assert_eq!(cloned.imap_host, config.imap_host);
         assert_eq!(cloned.smtp_port, config.smtp_port);
         assert_eq!(cloned.allowed_senders, config.allowed_senders);
+        assert_eq!(cloned.default_subject, config.default_subject);
     }
 
     // EmailChannel tests
@@ -986,7 +912,7 @@ mod tests {
             from_address: "bot@example.com".to_string(),
             idle_timeout_secs: 1740,
             allowed_senders: vec!["allowed@example.com".to_string()],
-            imap_id: EmailImapIdConfig::default(),
+            default_subject: "Serialization Test".to_string(),
         };
 
         let json = serde_json::to_string(&config).unwrap();
@@ -995,6 +921,7 @@ mod tests {
         assert_eq!(deserialized.imap_host, config.imap_host);
         assert_eq!(deserialized.smtp_port, config.smtp_port);
         assert_eq!(deserialized.allowed_senders, config.allowed_senders);
+        assert_eq!(deserialized.default_subject, config.default_subject);
     }
 
     #[test]
@@ -1012,8 +939,7 @@ mod tests {
         assert_eq!(config.smtp_port, 465); // default
         assert!(config.smtp_tls); // default
         assert_eq!(config.idle_timeout_secs, 1740); // default
-        assert!(config.imap_id.enabled); // default
-        assert_eq!(config.imap_id.name, "zeroclaw"); // default
+        assert_eq!(config.default_subject, "ZeroClaw Message"); // default
     }
 
     #[test]
@@ -1052,45 +978,6 @@ mod tests {
         };
         let channel = EmailChannel::new(config);
         assert_eq!(channel.config.idle_timeout_secs, 600);
-    }
-
-    #[test]
-    fn imap_id_defaults_deserialize_when_omitted() {
-        let json = r#"{
-            "imap_host": "imap.test.com",
-            "smtp_host": "smtp.test.com",
-            "username": "user",
-            "password": "pass",
-            "from_address": "bot@test.com"
-        }"#;
-
-        let config: EmailConfig = serde_json::from_str(json).unwrap();
-        assert!(config.imap_id.enabled);
-        assert_eq!(config.imap_id.name, "zeroclaw");
-        assert_eq!(config.imap_id.vendor, "zeroclaw-labs");
-    }
-
-    #[test]
-    fn imap_id_custom_values_deserialize() {
-        let json = r#"{
-            "imap_host": "imap.test.com",
-            "smtp_host": "smtp.test.com",
-            "username": "user",
-            "password": "pass",
-            "from_address": "bot@test.com",
-            "imap_id": {
-                "enabled": false,
-                "name": "custom-client",
-                "version": "9.9.9",
-                "vendor": "custom-vendor"
-            }
-        }"#;
-
-        let config: EmailConfig = serde_json::from_str(json).unwrap();
-        assert!(!config.imap_id.enabled);
-        assert_eq!(config.imap_id.name, "custom-client");
-        assert_eq!(config.imap_id.version, "9.9.9");
-        assert_eq!(config.imap_id.vendor, "custom-vendor");
     }
 
     #[test]
