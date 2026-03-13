@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { Send, Bot, User, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Send, Bot, User, AlertCircle, Copy, Check } from 'lucide-react';
 import type { WsMessage } from '@/types/api';
 import { WebSocketClient } from '@/lib/ws';
 
@@ -8,20 +8,6 @@ interface ChatMessage {
   role: 'user' | 'agent';
   content: string;
   timestamp: Date;
-}
-
-let fallbackMessageIdCounter = 0;
-const EMPTY_DONE_FALLBACK =
-  'Tool execution completed, but no final response text was returned.';
-
-function makeMessageId(): string {
-  const uuid = globalThis.crypto?.randomUUID?.();
-  if (uuid) return uuid;
-
-  fallbackMessageIdCounter += 1;
-  return `msg_${Date.now().toString(36)}_${fallbackMessageIdCounter.toString(36)}_${Math.random()
-    .toString(36)
-    .slice(2, 10)}`;
 }
 
 export default function AgentChat() {
@@ -33,7 +19,8 @@ export default function AgentChat() {
 
   const wsRef = useRef<WebSocketClient | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const pendingContentRef = useRef('');
 
   useEffect(() => {
@@ -54,22 +41,6 @@ export default function AgentChat() {
 
     ws.onMessage = (msg: WsMessage) => {
       switch (msg.type) {
-        case 'history': {
-          const restored: ChatMessage[] = (msg.messages ?? [])
-            .filter((entry) => entry.content?.trim())
-            .map((entry): ChatMessage => ({
-              id: makeMessageId(),
-              role: entry.role === 'user' ? 'user' : 'agent',
-              content: entry.content.trim(),
-              timestamp: new Date(),
-            }));
-
-          setMessages(restored);
-          setTyping(false);
-          pendingContentRef.current = '';
-          break;
-        }
-
         case 'chunk':
           setTyping(true);
           pendingContentRef.current += msg.content ?? '';
@@ -77,19 +48,18 @@ export default function AgentChat() {
 
         case 'message':
         case 'done': {
-          const content = (msg.full_response ?? msg.content ?? pendingContentRef.current ?? '').trim();
-          const finalContent = content || EMPTY_DONE_FALLBACK;
-
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: makeMessageId(),
-              role: 'agent',
-              content: finalContent,
-              timestamp: new Date(),
-            },
-          ]);
-
+          const content = msg.full_response ?? msg.content ?? pendingContentRef.current;
+          if (content) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: 'agent',
+                content,
+                timestamp: new Date(),
+              },
+            ]);
+          }
           pendingContentRef.current = '';
           setTyping(false);
           break;
@@ -99,7 +69,7 @@ export default function AgentChat() {
           setMessages((prev) => [
             ...prev,
             {
-              id: makeMessageId(),
+              id: crypto.randomUUID(),
               role: 'agent',
               content: `[Tool Call] ${msg.name ?? 'unknown'}(${JSON.stringify(msg.args ?? {})})`,
               timestamp: new Date(),
@@ -111,7 +81,7 @@ export default function AgentChat() {
           setMessages((prev) => [
             ...prev,
             {
-              id: makeMessageId(),
+              id: crypto.randomUUID(),
               role: 'agent',
               content: `[Tool Result] ${msg.output ?? ''}`,
               timestamp: new Date(),
@@ -123,7 +93,7 @@ export default function AgentChat() {
           setMessages((prev) => [
             ...prev,
             {
-              id: makeMessageId(),
+              id: crypto.randomUUID(),
               role: 'agent',
               content: `[Error] ${msg.message ?? 'Unknown error'}`,
               timestamp: new Date(),
@@ -154,7 +124,7 @@ export default function AgentChat() {
     setMessages((prev) => [
       ...prev,
       {
-        id: makeMessageId(),
+        id: crypto.randomUUID(),
         role: 'user',
         content: trimmed,
         timestamp: new Date(),
@@ -170,7 +140,10 @@ export default function AgentChat() {
     }
 
     setInput('');
-    inputRef.current?.focus();
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+      inputRef.current.focus();
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -180,8 +153,21 @@ export default function AgentChat() {
     }
   };
 
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    e.target.style.height = 'auto';
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
+  };
+
+  const handleCopy = useCallback((msgId: string, content: string) => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopiedId(msgId);
+      setTimeout(() => setCopiedId((prev) => (prev === msgId ? null : prev)), 2000);
+    });
+  }, []);
+
   return (
-    <div className="flex min-h-[28rem] flex-col h-[calc(100dvh-8.5rem)]">
+    <div className="flex flex-col h-[calc(100vh-3.5rem)]">
       {/* Connection status bar */}
       {error && (
         <div className="px-4 py-2 bg-red-900/30 border-b border-red-700 flex items-center gap-2 text-sm text-red-300">
@@ -203,7 +189,7 @@ export default function AgentChat() {
         {messages.map((msg) => (
           <div
             key={msg.id}
-            className={`flex items-start gap-3 ${
+            className={`group flex items-start gap-3 ${
               msg.role === 'user' ? 'flex-row-reverse' : ''
             }`}
           >
@@ -220,21 +206,34 @@ export default function AgentChat() {
                 <Bot className="h-4 w-4 text-white" />
               )}
             </div>
-            <div
-              className={`max-w-[75%] rounded-xl px-4 py-3 ${
-                msg.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-800 text-gray-100 border border-gray-700'
-              }`}
-            >
-              <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
-              <p
-                className={`text-xs mt-1 ${
-                  msg.role === 'user' ? 'text-blue-200' : 'text-gray-500'
+            <div className="relative max-w-[75%]">
+              <div
+                className={`rounded-xl px-4 py-3 ${
+                  msg.role === 'user'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-800 text-gray-100 border border-gray-700'
                 }`}
               >
-                {msg.timestamp.toLocaleTimeString()}
-              </p>
+                <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
+                <p
+                  className={`text-xs mt-1 ${
+                    msg.role === 'user' ? 'text-blue-200' : 'text-gray-500'
+                  }`}
+                >
+                  {msg.timestamp.toLocaleTimeString()}
+                </p>
+              </div>
+              <button
+                onClick={() => handleCopy(msg.id, msg.content)}
+                aria-label="Copy message"
+                className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-400 hover:text-white"
+              >
+                {copiedId === msg.id ? (
+                  <Check className="h-3.5 w-3.5 text-green-400" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" />
+                )}
+              </button>
             </div>
           </div>
         ))}
@@ -259,18 +258,19 @@ export default function AgentChat() {
       </div>
 
       {/* Input area */}
-      <div className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-        <div className="flex items-center gap-3 max-w-4xl mx-auto">
+      <div className="border-t border-gray-800 bg-gray-900 p-4">
+        <div className="flex items-end gap-3 max-w-4xl mx-auto">
           <div className="flex-1 relative">
-            <input
+            <textarea
               ref={inputRef}
-              type="text"
+              rows={1}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
               placeholder={connected ? 'Type a message...' : 'Connecting...'}
               disabled={!connected}
-              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 resize-none overflow-y-auto"
+              style={{ minHeight: '44px', maxHeight: '200px' }}
             />
           </div>
           <button
