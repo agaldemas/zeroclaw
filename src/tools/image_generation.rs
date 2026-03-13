@@ -109,7 +109,7 @@ impl ImageGenerationTool {
             .provider
             .as_deref()
             .or(self.config.default_provider.as_deref())
-            .unwrap_or("openai");
+            .unwrap_or("gemini");
 
         let model = params
             .model
@@ -173,11 +173,15 @@ impl ImageGenerationTool {
         };
 
         // Get API key
-        let api_key = self
-            .get_api_key("gemini")
-            .ok_or_else(|| anyhow::anyhow!("No API key configured for Gemini image generation"))?;
+        let api_key = self.get_api_key("gemini").ok_or_else(|| anyhow::anyhow!("No API key"))?;
 
-        let client = reqwest::Client::new();
+        // Use a client with appropriate timeouts for image generation (long-running operations)
+        // Similar to other providers that use 120s timeout, 10s connect timeout
+        let client = crate::config::build_runtime_proxy_client_with_timeouts(
+            "tool.image_generation",
+            120,  // timeout_secs - image generation can take a while
+            10,   // connect_timeout_secs
+        );
 
         // Step 1: Upload the image file using Gemini's upload API
         let upload_url = format!(
@@ -371,9 +375,7 @@ impl ImageGenerationTool {
         _image_path: Option<String>,
     ) -> anyhow::Result<ImageGenerationResponse> {
         // Get API key from config or environment
-        let api_key = self
-            .get_api_key(provider)
-            .ok_or_else(|| anyhow::anyhow!("No API key configured for image generation (provider: {})", provider))?;
+        let api_key = self.get_api_key(provider).ok_or_else(|| anyhow::anyhow!("No API key"))?;
 
         // Build request URL based on provider
         let url = match provider {
@@ -386,8 +388,13 @@ impl ImageGenerationTool {
             _ => return Err(anyhow::anyhow!("Unsupported image generation provider: {}", provider)),
         };
 
-        // Make the HTTP request
-        let client = reqwest::Client::new();
+        // Make the HTTP request with appropriate timeouts for image generation
+        // Similar to other providers that use 120s timeout, 10s connect timeout
+        let client = crate::config::build_runtime_proxy_client_with_timeouts(
+            "tool.image_generation",
+            120,  // timeout_secs - image generation can take a while
+            10,   // connect_timeout_secs
+        );
         let mut request = client.post(url);
 
         // Add authentication and headers
@@ -625,6 +632,20 @@ impl Tool for ImageGenerationTool {
             });
         }
 
+        // Silently skip if no API key is available (no error logged)
+        let provider_name = params
+            .provider
+            .as_deref()
+            .or(self.config.default_provider.as_deref())
+            .unwrap_or("gemini");
+        if self.get_api_key(provider_name).is_none() {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: None,
+            });
+        }
+
         match self.generate(params).await {
             Ok(response) => {
                 let mut output = format!(
@@ -680,7 +701,7 @@ impl Tool for ImageGenerationTool {
                 })
             }
             Err(e) => {
-                tracing::error!(error = %e, "Image generation failed");
+                tracing::warn!(error = %e, "Image generation failed (will retry)");
                 Ok(ToolResult {
                     success: false,
                     output: String::new(),

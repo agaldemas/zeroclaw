@@ -10,3 +10,8 @@ linker = "armv7a-linux-androideabi21-clang"
 
 [target.aarch64-linux-android]
 linker = "aarch64-linux-android21-clang"
+
+# Build version for development - injected at compile time
+# (Nix sets this automatically; this is a fallback for regular cargo builds)
+[env]
+ZEROCLAW_BUILD_VERSION = { value = "dev", force = true }
