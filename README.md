@@ -73,6 +73,8 @@ Use this board for important notices (breaking changes, security advisories, mai
 - ⚡ **Fast Cold Starts:** Single-binary Rust runtime keeps command and daemon startup near-instant for daily operations.
 - 🌍 **Portable Architecture:** One binary-first workflow across ARM, x86, and RISC-V with swappable providers/channels/tools.
 - 🔍 **Research Phase:** Proactive information gathering through tools before response generation — reduces hallucinations by fact-checking first.
+- 🎨 **Image Generation & Editing (Gemini):** Generate and edit images using Gemini's nano-banana models. Simply send an image with "modify/edit" to edit it!
+- 🎙️ **Audio Transcription (Gemini via Groq):** Transcribe voice messages with Gemini models through the Groq API.
 
 ### Why teams pick ZeroClaw
 

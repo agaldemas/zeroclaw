@@ -108,6 +108,21 @@ default_model = "qwen2.5-coder:7b"
 - Gemini CLI OAuth requests use `cloudcode-pa.googleapis.com/v1internal` with Code Assist request envelope semantics
 - Thinking models (e.g. `gemini-3-pro-preview`) are supported — internal reasoning parts are automatically filtered from the response
 
+#### Image Generation & Editing
+
+- **Supported**: Gemini (tested with `nano-banana-pro-preview` model)
+- **Important**: Old Imagen models (e.g., `imagen-3`) do NOT work for image generation — their API is incompatible with the image generation endpoint.
+- **Only the nano-banana series models** support both image generation AND editing.
+- To edit an image, use the `image` parameter with the tool `image_generation` — this passes the existing image to Gemini for modification.
+- Configuration: See `[multimodal.generation]` in `config-reference.md`
+
+#### Audio Transcription
+
+- **Supported**: Gemini models via Groq API
+- API endpoint: `https://api.groq.com/openai/v1/audio/transcriptions`
+- Model: `gemini-2.5-flash` (configured in `[transcription].model`)
+- Configuration: See `[transcription]` in `config-reference.md`
+
 ### Qwen (Alibaba Cloud) Notes
 
 - Provider IDs: `qwen`, `qwen-code` (OAuth), `qwen-oauth`, `dashscope`, `qwen-intl`, `qwen-us`

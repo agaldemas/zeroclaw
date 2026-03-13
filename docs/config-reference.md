@@ -768,6 +768,41 @@ Notes:
   - `tool.http_request` (compatibility fallback path)
   - `provider.*` or the active provider key (for example `provider.openai`)
 
+## `[multimodal.generation]`
+
+Image generation and editing via Gemini.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `enabled` | `false` | Enable image generation tool |
+| `default_image_provider` | `"gemini"` | Provider for image generation |
+| `default_image_model` | `"nano-banana-pro-preview"` | Model for generation (nano-banana series required) |
+| `image_generation_keywords` | keyword list | Keywords to auto-detect generation requests |
+
+Notes:
+
+- **Important**: Only the **nano-banana series** models support image generation and editing.
+- Old Imagen models (e.g., `imagen-3`) do NOT work — their API is incompatible with the image generation endpoint.
+- To edit an image, provide the `image` parameter with a local file path — this passes the image to Gemini for modification.
+- See `[transcription]` for audio transcription configuration.
+
+## `[transcription]`
+
+Audio transcription via Groq API with Gemini models.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `enabled` | `true` | Enable audio transcription |
+| `api_url` | `https://api.groq.com/openai/v1/audio/transcriptions` | Transcription API endpoint |
+| `model` | `"gemini-2.5-flash"` | Gemini model used for transcription |
+| `max_duration_secs` | `120` | Maximum audio duration in seconds |
+
+Notes:
+
+- Transcription uses the Groq API (not direct Gemini) for faster processing.
+- The `model` field specifies which Gemini model to use for transcription.
+- See `[multimodal.generation]` for image generation configuration.
+
 ## `[browser]`
 
 | Key | Default | Purpose |
