@@ -1,10 +1,9 @@
 use crate::providers::traits::{
     ChatMessage, ChatRequest as ProviderChatRequest, ChatResponse as ProviderChatResponse,
-    Provider, ProviderCapabilities, TokenUsage, ToolCall as ProviderToolCall,
+    NormalizedStopReason, Provider, ProviderCapabilities, TokenUsage, ToolCall as ProviderToolCall,
 };
 use crate::tools::ToolSpec;
 use async_trait::async_trait;
-use base64::Engine as _;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -61,14 +60,6 @@ struct NativeMessage {
 }
 
 #[derive(Debug, Serialize)]
-struct ImageSource {
-    #[serde(rename = "type")]
-    source_type: String,
-    media_type: String,
-    data: String,
-}
-
-#[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 enum NativeContentOut {
     #[serde(rename = "text")]
@@ -94,6 +85,14 @@ enum NativeContentOut {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+}
+
+#[derive(Debug, Serialize)]
+struct ImageSource {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    media_type: String,
+    data: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -139,6 +138,8 @@ struct SystemBlock {
 struct NativeChatResponse {
     #[serde(default)]
     content: Vec<NativeContentIn>,
+    #[serde(default)]
+    stop_reason: Option<String>,
     #[serde(default)]
     usage: Option<AnthropicUsage>,
 }
@@ -302,6 +303,44 @@ impl AnthropicProvider {
         })
     }
 
+    fn parse_inline_image(marker_content: &str) -> Option<NativeContentOut> {
+        let rest = marker_content.strip_prefix("data:")?;
+        let semi_pos = rest.find(';')?;
+        let media_type = rest[..semi_pos].to_string();
+        let after_semi = &rest[semi_pos + 1..];
+        let data = after_semi.strip_prefix("base64,")?;
+        Some(NativeContentOut::Image {
+            source: ImageSource {
+                kind: "base64",
+                media_type,
+                data: data.to_string(),
+            },
+        })
+    }
+
+    fn build_user_content_blocks(content: &str) -> Vec<NativeContentOut> {
+        let (text_part, image_refs) = crate::multimodal::parse_image_markers(content);
+        if image_refs.is_empty() {
+            return vec![NativeContentOut::Text {
+                text: content.to_string(),
+                cache_control: None,
+            }];
+        }
+        let mut blocks = Vec::new();
+        if !text_part.trim().is_empty() {
+            blocks.push(NativeContentOut::Text {
+                text: text_part,
+                cache_control: None,
+            });
+        }
+        for marker_content in image_refs {
+            if let Some(image_block) = Self::parse_inline_image(&marker_content) {
+                blocks.push(image_block);
+            }
+        }
+        blocks
+    }
+
     fn convert_messages(messages: &[ChatMessage]) -> (Option<SystemPrompt>, Vec<NativeMessage>) {
         let mut system_text = None;
         let mut native_messages = Vec::new();
@@ -343,71 +382,9 @@ impl AnthropicProvider {
                     }
                 }
                 _ => {
-                    // Parse image markers from user message content
-                    let (text, image_refs) = crate::multimodal::parse_image_markers(&msg.content);
-                    let mut content_blocks: Vec<NativeContentOut> = Vec::new();
-
-                    // Add image content blocks for each image reference
-                    for img_ref in &image_refs {
-                        let (media_type, data) = if img_ref.starts_with("data:") {
-                            // Data URI format: data:image/jpeg;base64,/9j/4AAQ...
-                            if let Some(comma) = img_ref.find(',') {
-                                let header = &img_ref[5..comma];
-                                let mime =
-                                    header.split(';').next().unwrap_or("image/jpeg").to_string();
-                                let b64 = img_ref[comma + 1..].trim().to_string();
-                                (mime, b64)
-                            } else {
-                                continue;
-                            }
-                        } else if std::path::Path::new(img_ref.trim()).exists() {
-                            // Local file path
-                            match std::fs::read(img_ref.trim()) {
-                                Ok(bytes) => {
-                                    let b64 =
-                                        base64::engine::general_purpose::STANDARD.encode(&bytes);
-                                    let ext = std::path::Path::new(img_ref.trim())
-                                        .extension()
-                                        .and_then(|e| e.to_str())
-                                        .unwrap_or("jpg");
-                                    let mime = match ext {
-                                        "png" => "image/png",
-                                        "gif" => "image/gif",
-                                        "webp" => "image/webp",
-                                        _ => "image/jpeg",
-                                    }
-                                    .to_string();
-                                    (mime, b64)
-                                }
-                                Err(_) => continue,
-                            }
-                        } else {
-                            continue;
-                        };
-
-                        content_blocks.push(NativeContentOut::Image {
-                            source: ImageSource {
-                                source_type: "base64".to_string(),
-                                media_type,
-                                data,
-                            },
-                        });
-                    }
-
-                    // Add text content block
-                    let display_text = if text.is_empty() && !image_refs.is_empty() {
-                        "[image]".to_string()
-                    } else {
-                        text
-                    };
-                    content_blocks.push(NativeContentOut::Text {
-                        text: display_text,
-                        cache_control: None,
-                    });
-
                     native_messages.push(NativeMessage {
                         role: "user".to_string(),
-                        content: content_blocks,
+                        content: Self::build_user_content_blocks(&msg.content),
                     });
                 }
             }
@@ -433,14 +410,19 @@ impl AnthropicProvider {
         response
             .content
             .into_iter()
-            .find(|c| c.kind == "text")
-            .and_then(|c| c.text)
+            .filter(|c| c.kind == "text")
+            .filter_map(|c| c.text.map(|text| text.trim().to_string()))
+            .find(|text| !text.is_empty())
             .ok_or_else(|| anyhow::anyhow!("No response from Anthropic"))
     }
 
     fn parse_native_response(response: NativeChatResponse) -> ProviderChatResponse {
         let mut text_parts = Vec::new();
         let mut tool_calls = Vec::new();
+        let raw_stop_reason = response.stop_reason.clone();
+        let stop_reason = raw_stop_reason
+            .as_deref()
+            .map(NormalizedStopReason::from_anthropic_stop_reason);
 
         let usage = response.usage.map(|u| TokenUsage {
             input_tokens: u.input_tokens,
@@ -483,6 +465,9 @@ impl AnthropicProvider {
             tool_calls,
             usage,
             reasoning_content: None,
+            quota_metadata: None,
+            stop_reason,
+            raw_stop_reason,
         }
     }
 
@@ -576,8 +561,18 @@ impl Provider for AnthropicProvider {
             return Err(super::api_error("Anthropic", response).await);
         }
 
+        // Extract quota metadata from response headers before consuming body
+        let quota_extractor = super::quota_adapter::UniversalQuotaExtractor::new();
+        let quota_metadata = quota_extractor.extract("anthropic", response.headers(), None);
+
         let native_response: NativeChatResponse = response.json().await?;
-        Ok(Self::parse_native_response(native_response))
+        let mut result = Self::parse_native_response(native_response);
+        result.quota_metadata = quota_metadata;
+        Ok(result)
+    }
+
+    fn supports_native_tools(&self) -> bool {
+        true
     }
 
     fn capabilities(&self) -> ProviderCapabilities {
@@ -585,10 +580,6 @@ impl Provider for AnthropicProvider {
             native_tool_calling: true,
             vision: true,
         }
-    }
-
-    fn supports_native_tools(&self) -> bool {
-        true
     }
 
     async fn chat_with_tools(
@@ -1432,122 +1423,40 @@ mod tests {
     }
 
     #[test]
-    fn capabilities_returns_vision_and_native_tools() {
+    fn parse_text_response_ignores_empty_and_whitespace_text_blocks() {
+        let json = r#"{
+            "content": [
+                {"type": "text", "text": ""},
+                {"type": "text", "text": "   \n  "},
+                {"type": "text", "text": "  final answer  "}
+            ]
+        }"#;
+        let response: ChatResponse = serde_json::from_str(json).unwrap();
+
+        let parsed = AnthropicProvider::parse_text_response(response).unwrap();
+        assert_eq!(parsed, "final answer");
+    }
+
+    #[test]
+    fn parse_text_response_rejects_empty_or_whitespace_only_text_blocks() {
+        let json = r#"{
+            "content": [
+                {"type": "text", "text": ""},
+                {"type": "text", "text": "   \n  "},
+                {"type": "tool_use", "id": "tool_1", "name": "shell"}
+            ]
+        }"#;
+        let response: ChatResponse = serde_json::from_str(json).unwrap();
+
+        let err = AnthropicProvider::parse_text_response(response).unwrap_err();
+        assert!(err.to_string().contains("No response from Anthropic"));
+    }
+
+    #[test]
+    fn capabilities_reports_vision_and_native_tool_calling() {
         let provider = AnthropicProvider::new(Some("test-key"));
         let caps = provider.capabilities();
-        assert!(
-            caps.native_tool_calling,
-            "Anthropic should support native tool calling"
-        );
-        assert!(caps.vision, "Anthropic should support vision");
-    }
-
-    #[test]
-    fn convert_messages_with_image_marker_data_uri() {
-        let messages = vec![ChatMessage {
-            role: "user".to_string(),
-            content: "Check this image: [IMAGE:data:image/jpeg;base64,/9j/4AAQ] What do you see?"
-                .to_string(),
-        }];
-
-        let (_, native_msgs) = AnthropicProvider::convert_messages(&messages);
-
-        assert_eq!(native_msgs.len(), 1);
-        assert_eq!(native_msgs[0].role, "user");
-        // Should have 2 content blocks: image + text
-        assert_eq!(native_msgs[0].content.len(), 2);
-
-        // First block should be image
-        match &native_msgs[0].content[0] {
-            NativeContentOut::Image { source } => {
-                assert_eq!(source.source_type, "base64");
-                assert_eq!(source.media_type, "image/jpeg");
-                assert_eq!(source.data, "/9j/4AAQ");
-            }
-            _ => panic!("Expected Image content block"),
-        }
-
-        // Second block should be text (parse_image_markers may leave extra spaces)
-        match &native_msgs[0].content[1] {
-            NativeContentOut::Text { text, .. } => {
-                // The text may have extra spaces where the marker was removed
-                assert!(
-                    text.contains("Check this image:") && text.contains("What do you see?"),
-                    "Expected text to contain 'Check this image:' and 'What do you see?', got: {}",
-                    text
-                );
-            }
-            _ => panic!("Expected Text content block"),
-        }
-    }
-
-    #[test]
-    fn convert_messages_with_only_image_marker() {
-        let messages = vec![ChatMessage {
-            role: "user".to_string(),
-            content: "[IMAGE:data:image/png;base64,iVBORw0KGgo]".to_string(),
-        }];
-
-        let (_, native_msgs) = AnthropicProvider::convert_messages(&messages);
-
-        assert_eq!(native_msgs.len(), 1);
-        assert_eq!(native_msgs[0].content.len(), 2);
-
-        // First block should be image
-        match &native_msgs[0].content[0] {
-            NativeContentOut::Image { source } => {
-                assert_eq!(source.media_type, "image/png");
-            }
-            _ => panic!("Expected Image content block"),
-        }
-
-        // Second block should be placeholder text
-        match &native_msgs[0].content[1] {
-            NativeContentOut::Text { text, .. } => {
-                assert_eq!(text, "[image]");
-            }
-            _ => panic!("Expected Text content block with [image] placeholder"),
-        }
-    }
-
-    #[test]
-    fn convert_messages_without_image_marker() {
-        let messages = vec![ChatMessage {
-            role: "user".to_string(),
-            content: "Hello, how are you?".to_string(),
-        }];
-
-        let (_, native_msgs) = AnthropicProvider::convert_messages(&messages);
-
-        assert_eq!(native_msgs.len(), 1);
-        assert_eq!(native_msgs[0].content.len(), 1);
-
-        match &native_msgs[0].content[0] {
-            NativeContentOut::Text { text, .. } => {
-                assert_eq!(text, "Hello, how are you?");
-            }
-            _ => panic!("Expected Text content block"),
-        }
-    }
-
-    #[test]
-    fn image_content_serializes_correctly() {
-        let content = NativeContentOut::Image {
-            source: ImageSource {
-                source_type: "base64".to_string(),
-                media_type: "image/jpeg".to_string(),
-                data: "testdata".to_string(),
-            },
-        };
-        let json = serde_json::to_string(&content).unwrap();
-        // The outer "type" is the enum tag, inner "type" (source_type) is renamed
-        assert!(json.contains(r#""type":"image""#), "JSON: {}", json);
-        assert!(json.contains(r#""type":"base64""#), "JSON: {}", json); // source_type is serialized as "type"
-        assert!(
-            json.contains(r#""media_type":"image/jpeg""#),
-            "JSON: {}",
-            json
-        );
-        assert!(json.contains(r#""data":"testdata""#), "JSON: {}", json);
+        assert!(caps.vision);
+        assert!(caps.native_tool_calling);
     }
 }

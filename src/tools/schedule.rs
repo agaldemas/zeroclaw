@@ -253,6 +253,14 @@ impl ScheduleTool {
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| anyhow::anyhow!("Missing or empty 'command' parameter"))?;
 
+        if let Err(reason) = self.security.validate_command_execution(command, approved) {
+            return Ok(ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some(reason),
+            });
+        }
+
         let expression = args.get("expression").and_then(|value| value.as_str());
         let delay = args.get("delay").and_then(|value| value.as_str());
         let run_at = args.get("run_at").and_then(|value| value.as_str());
@@ -301,28 +309,8 @@ impl ScheduleTool {
             }
         }
 
-        // All job creation routes through validated cron helpers, which enforce
-        // the full security policy (allowlist + risk gate) before persistence.
         if let Some(value) = expression {
-            let job = match cron::add_shell_job_with_approval(
-                &self.config,
-                None,
-                cron::Schedule::Cron {
-                    expr: value.to_string(),
-                    tz: None,
-                },
-                command,
-                approved,
-            ) {
-                Ok(job) => job,
-                Err(error) => {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(error.to_string()),
-                    });
-                }
-            };
+            let job = cron::add_job(&self.config, value, command)?;
             return Ok(ToolResult {
                 success: true,
                 output: format!(
@@ -337,16 +325,7 @@ impl ScheduleTool {
         }
 
         if let Some(value) = delay {
-            let job = match cron::add_once_validated(&self.config, value, command, approved) {
-                Ok(job) => job,
-                Err(error) => {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(error.to_string()),
-                    });
-                }
-            };
+            let job = cron::add_once(&self.config, value, command)?;
             return Ok(ToolResult {
                 success: true,
                 output: format!(
@@ -364,17 +343,7 @@ impl ScheduleTool {
             .map_err(|error| anyhow::anyhow!("Invalid run_at timestamp: {error}"))?
             .with_timezone(&Utc);
 
-        let job = match cron::add_once_at_validated(&self.config, run_at_parsed, command, approved)
-        {
-            Ok(job) => job,
-            Err(error) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(error.to_string()),
-                });
-            }
-        };
+        let job = cron::add_once_at(&self.config, run_at_parsed, command)?;
         Ok(ToolResult {
             success: true,
             output: format!(
