@@ -1,4 +1,4 @@
-api_key = "enc2:26c54b6c67adcfcbf01f6e995d21643512a65e55f738b574060e256ef6a5ab62858991c08ae2b035b7c45c24f59bed40a22de63717416d4b4c820c90edd9e78d1c61fc"
+api_key = "enc2:9caf4874413f9da727930ad2e04e113746c47a3a856772f8556a0380112931cd7113586745c30c72e149caf951e2372d255bea2fb1342584f120dd4d9a7e9cc1b1b44d"
 default_provider = "gemini"
 default_model = "gemini-3.1-pro-preview"
 default_temperature = 0.7
@@ -387,7 +387,7 @@ cli = true
 message_timeout_secs = 300
 
 [channels_config.telegram]
-bot_token = "enc2:639eae419c87f7401aa6b7a7ff7ff667e1d43a41acaf225f2a6c8b16e1cfe15386ffe4c7716fcc308cc86798abe753373d6ab97be840f35ab5c78c7f7da109919c241b47d53c73c49fb7"
+bot_token = "enc2:94c7d4835247dc9922b032697faa07c746528fbc1af4cf6e5ce0a47fe23021f7293b32fcf297bf0c9d223a16d135adc2394d602174a17278f62092226ceb156f3bf8fde12c8c6f7f90aa"
 allowed_users = [
     "8566607690",
     "8242800610",
@@ -439,9 +439,9 @@ provider = "none"
 [gateway]
 port = 42617
 host = "127.0.0.1"
-require_pairing = true
+require_pairing = false
 allow_public_bind = false
-paired_tokens = ["enc2:9464dda9d22aafd6a99799e00d6b4518253eeeaa988370fbb5ea550024b04c5f9907b8b41ab946bd43d768ded9d30b52cba81aa5d2df5654832685a86099a8c34d5dd4e540988e5cf7e0ae7cf6d5673a01f3f125142ca016c0107b09"]
+paired_tokens = ["enc2:c343504f7b94976f80459cb2dfc9ed0776c9651e5b6b44fbbfe2f1ef95887d4e441ca149f1b729068c0ff8b10160ecefd3a1badb244f1aa38a3cee765a31612804ef7928e2d8f5e65111be343bdda859d73020c96575acf250053950"]
 pair_rate_limit_per_minute = 10
 webhook_rate_limit_per_minute = 60
 trust_forwarded_headers = false
@@ -488,14 +488,42 @@ user_agent = "ZeroClaw/1.0"
 [http_request.credential_profiles]
 
 [multimodal]
-max_images = 4
-max_image_size_mb = 10
 allow_remote_fetch = false
 
-[multimodal.generation]
+[multimodal.image]
 enabled = true
-default_image_provider = "gemini"
-default_image_model = "nano-banana-pro-preview"
+max_images = 4
+max_size_mb = 5
+default_provider = "gemini"
+default_model = "nano-banana-pro-preview"
+generation_keywords = [
+    "image",
+    "photo",
+    "picture",
+    "dessin",
+    "gener",
+    "creat",
+    "image",
+    "modif",
+    "edit",
+    "transform",
+    "convert",
+    "redessin",
+    "recre",
+    "change",
+    "recolor",
+    "retouch",
+    "chang",
+    "modif",
+]
+
+[multimodal.audio]
+enabled = false
+
+[multimodal.video]
+enabled = false
+default_provider = "gemini"
+default_model = "veo-2.0-generate-001"
 
 [web_fetch]
 enabled = false
@@ -538,13 +566,21 @@ monthly_limit_usd = 100.0
 warn_at_percent = 80
 allow_override = false
 
-[cost.prices."anthropic/claude-opus-4-20250514"]
+[cost.prices."openai/o1-preview"]
 input = 15.0
-output = 75.0
+output = 60.0
 
 [cost.prices."google/gemini-1.5-pro"]
 input = 1.25
 output = 5.0
+
+[cost.prices."google/gemini-2.0-flash"]
+input = 0.1
+output = 0.4
+
+[cost.prices."openai/gpt-4o"]
+input = 5.0
+output = 15.0
 
 [cost.prices."openai/gpt-4o-mini"]
 input = 0.15
@@ -554,21 +590,13 @@ output = 0.6
 input = 3.0
 output = 15.0
 
-[cost.prices."openai/o1-preview"]
-input = 15.0
-output = 60.0
-
-[cost.prices."openai/gpt-4o"]
-input = 5.0
-output = 15.0
-
 [cost.prices."anthropic/claude-3-haiku"]
 input = 0.25
 output = 1.25
 
-[cost.prices."google/gemini-2.0-flash"]
-input = 0.1
-output = 0.4
+[cost.prices."anthropic/claude-opus-4-20250514"]
+input = 15.0
+output = 75.0
 
 [cost.prices."anthropic/claude-3.5-sonnet"]
 input = 3.0

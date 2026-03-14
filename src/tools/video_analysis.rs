@@ -1,16 +1,17 @@
 // Video Analysis Tool for ZeroClaw
 // Provides video analysis and understanding capabilities via multimodal providers
 
-use async_trait::async_trait;
 use super::traits::{Tool, ToolResult};
 use crate::config::schema::MultimodalVideoConfig;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 /// Video Analysis tool name
 pub const TOOL_NAME: &str = "video_analysis";
 
 /// Video Analysis tool description
-pub const TOOL_DESCRIPTION: &str = "Analyze video content to extract descriptions, transcripts, and insights";
+pub const TOOL_DESCRIPTION: &str =
+    "Analyze video content to extract descriptions, transcripts, and insights";
 
 /// Parameters for video analysis tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,7 +122,10 @@ impl VideoAnalysisTool {
     }
 
     /// Analyze a video based on the specified parameters
-    pub async fn analyze(&self, params: VideoAnalysisParams) -> anyhow::Result<VideoAnalysisResponse> {
+    pub async fn analyze(
+        &self,
+        params: VideoAnalysisParams,
+    ) -> anyhow::Result<VideoAnalysisResponse> {
         // Determine provider and model
         let provider_name = params
             .provider
@@ -146,10 +150,14 @@ impl VideoAnalysisTool {
             "transcribe" => self.transcribe_video(provider_name, model, &params).await?,
             "summarize" => self.summarize_video(provider_name, model, &params).await?,
             "extract_frames" => {
-                let (desc, extracted_frames) = self.extract_frames(provider_name, model, &params).await?;
+                let (desc, extracted_frames) =
+                    self.extract_frames(provider_name, model, &params).await?;
                 (desc, Some(extracted_frames))
             }
-            "qa" => self.answer_video_question(provider_name, model, &params).await?,
+            "qa" => {
+                self.answer_video_question(provider_name, model, &params)
+                    .await?
+            }
             _ => {
                 // Default to description
                 self.describe_video(provider_name, model, &params).await?

@@ -1270,7 +1270,7 @@ pub async fn run_tool_call_loop(
         let image_marker_count = multimodal::count_image_markers(history);
         let provider_supports_vision =
             should_treat_provider_as_vision_capable(provider_name, provider);
-        
+
         // Check if user message contains image generation keywords (not vision analysis)
         // If keywords are present, skip vision capability check and let agent use image_generation tool
         let user_text = history
@@ -1283,7 +1283,7 @@ pub async fn run_tool_call_loop(
         let contains_generation_keyword = generation_keywords
             .iter()
             .any(|kw| user_text.contains(&kw.to_lowercase()));
-        
+
         // Only enforce vision capability if: images present AND no generation keyword detected
         let should_enforce_vision = image_marker_count > 0 && !contains_generation_keyword;
 

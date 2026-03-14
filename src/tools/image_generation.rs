@@ -1,10 +1,10 @@
 // Image Generation Tool for ZeroClaw
 // Provides AI-powered image generation capabilities via configured providers
 
-use async_trait::async_trait;
 use super::traits::{Tool, ToolResult};
 use crate::config::schema::MultimodalImageConfig;
 use crate::providers::resolve_provider_credential;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -12,7 +12,8 @@ use std::path::PathBuf;
 pub const TOOL_NAME: &str = "image_generation";
 
 /// Image generation tool description
-pub const TOOL_DESCRIPTION: &str = "Generate or edit images from text descriptions using AI providers (Gemini, OpenAI, etc.)";
+pub const TOOL_DESCRIPTION: &str =
+    "Generate or edit images from text descriptions using AI providers (Gemini, OpenAI, etc.)";
 
 /// Parameters for image generation tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,7 +135,9 @@ impl ImageGenerationTool {
         let payload = self.build_provider_payload(provider_name, model, &params)?;
 
         // Call the provider (this would integrate with the existing provider system)
-        let response = self.call_provider(provider_name, model, payload, None).await?;
+        let response = self
+            .call_provider(provider_name, model, payload, None)
+            .await?;
 
         Ok(response)
     }
@@ -153,16 +156,20 @@ impl ImageGenerationTool {
         tracing::debug!(image_path = %image_path, model = %model, prompt = %params.prompt, "Starting Gemini image edit");
 
         // Read the image file as binary
-        let image_bytes = std::fs::read(image_path).map_err(|e| {
-            anyhow::anyhow!("Failed to read image file {}: {}", image_path, e)
-        })?;
-        
-        tracing::debug!(size_bytes = image_bytes.len(), "Image file read successfully");
+        let image_bytes = std::fs::read(image_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read image file {}: {}", image_path, e))?;
+
+        tracing::debug!(
+            size_bytes = image_bytes.len(),
+            "Image file read successfully"
+        );
 
         // Determine MIME type from file extension
         let mime_type = if image_path.to_lowercase().ends_with(".png") {
             "image/png"
-        } else if image_path.to_lowercase().ends_with(".jpg") || image_path.to_lowercase().ends_with(".jpeg") {
+        } else if image_path.to_lowercase().ends_with(".jpg")
+            || image_path.to_lowercase().ends_with(".jpeg")
+        {
             "image/jpeg"
         } else if image_path.to_lowercase().ends_with(".webp") {
             "image/webp"
@@ -173,14 +180,16 @@ impl ImageGenerationTool {
         };
 
         // Get API key
-        let api_key = self.get_api_key("gemini").ok_or_else(|| anyhow::anyhow!("No API key"))?;
+        let api_key = self
+            .get_api_key("gemini")
+            .ok_or_else(|| anyhow::anyhow!("No API key"))?;
 
         // Use a client with appropriate timeouts for image generation (long-running operations)
         // Similar to other providers that use 120s timeout, 10s connect timeout
         let client = crate::config::build_runtime_proxy_client_with_timeouts(
             "tool.image_generation",
-            120,  // timeout_secs - image generation can take a while
-            10,   // connect_timeout_secs
+            120, // timeout_secs - image generation can take a while
+            10,  // connect_timeout_secs
         );
 
         // Step 1: Upload the image file using Gemini's upload API
@@ -196,11 +205,11 @@ impl ImageGenerationTool {
                 "display_name": "image"
             }
         });
-        
+
         let part_metadata = reqwest::multipart::Part::text(metadata.to_string())
             .mime_str("application/json")
             .map_err(|e| anyhow::anyhow!("Invalid MIME type: {}", e))?;
-            
+
         let part_file = reqwest::multipart::Part::bytes(image_bytes)
             .mime_str(mime_type)
             .map_err(|e| anyhow::anyhow!("Invalid MIME type: {}", e))?
@@ -273,10 +282,9 @@ impl ImageGenerationTool {
             anyhow::bail!("Gemini generateContent error ({}): {}", status, error_body);
         }
 
-        let response_json: serde_json::Value = generate_response
-            .json()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to parse Gemini generateContent response: {}", e))?;
+        let response_json: serde_json::Value = generate_response.json().await.map_err(|e| {
+            anyhow::anyhow!("Failed to parse Gemini generateContent response: {}", e)
+        })?;
 
         // Parse response
         let images = self.parse_provider_response("gemini", response_json)?;
@@ -375,7 +383,9 @@ impl ImageGenerationTool {
         _image_path: Option<String>,
     ) -> anyhow::Result<ImageGenerationResponse> {
         // Get API key from config or environment
-        let api_key = self.get_api_key(provider).ok_or_else(|| anyhow::anyhow!("No API key"))?;
+        let api_key = self
+            .get_api_key(provider)
+            .ok_or_else(|| anyhow::anyhow!("No API key"))?;
 
         // Build request URL based on provider
         let url = match provider {
@@ -385,15 +395,20 @@ impl ImageGenerationTool {
                 "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
                 model, api_key
             ),
-            _ => return Err(anyhow::anyhow!("Unsupported image generation provider: {}", provider)),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unsupported image generation provider: {}",
+                    provider
+                ))
+            }
         };
 
         // Make the HTTP request with appropriate timeouts for image generation
         // Similar to other providers that use 120s timeout, 10s connect timeout
         let client = crate::config::build_runtime_proxy_client_with_timeouts(
             "tool.image_generation",
-            120,  // timeout_secs - image generation can take a while
-            10,   // connect_timeout_secs
+            120, // timeout_secs - image generation can take a while
+            10,  // connect_timeout_secs
         );
         let mut request = client.post(url);
 
@@ -427,11 +442,7 @@ impl ImageGenerationTool {
         if !response.status().is_success() {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "Image generation API error ({}): {}",
-                status,
-                error_body
-            );
+            anyhow::bail!("Image generation API error ({}): {}", status, error_body);
         }
 
         // Parse response
@@ -496,9 +507,16 @@ impl ImageGenerationTool {
                 let candidates = response
                     .get("candidates")
                     .and_then(|c| c.as_array())
-                    .ok_or_else(|| anyhow::anyhow!("Invalid Gemini response: missing candidates. Body: {}", response))?;
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Invalid Gemini response: missing candidates. Body: {}",
+                            response
+                        )
+                    })?;
 
-                let candidate = candidates.first().ok_or_else(|| anyhow::anyhow!("Gemini response: empty candidates"))?;
+                let candidate = candidates
+                    .first()
+                    .ok_or_else(|| anyhow::anyhow!("Gemini response: empty candidates"))?;
                 let parts = candidate
                     .get("content")
                     .and_then(|c| c.get("parts"))
@@ -508,9 +526,15 @@ impl ImageGenerationTool {
                 let mut images = Vec::new();
                 for part in parts {
                     if let Some(inline_data) = part.get("inlineData") {
-                        let mime_type = inline_data.get("mimeType").and_then(|m| m.as_str()).unwrap_or("image/png");
-                        let data = inline_data.get("data").and_then(|d| d.as_str()).ok_or_else(|| anyhow::anyhow!("Gemini part missing image data"))?;
-                        
+                        let mime_type = inline_data
+                            .get("mimeType")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("image/png");
+                        let data = inline_data
+                            .get("data")
+                            .and_then(|d| d.as_str())
+                            .ok_or_else(|| anyhow::anyhow!("Gemini part missing image data"))?;
+
                         images.push(ImageData {
                             url: None,
                             b64_json: Some(data.to_string()),
@@ -532,7 +556,9 @@ impl ImageGenerationTool {
                     .get("images")
                     .or_else(|| response.get("data"))
                     .and_then(|d| d.as_array())
-                    .ok_or_else(|| anyhow::anyhow!("Invalid response format for provider {}", provider))?;
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Invalid response format for provider {}", provider)
+                    })?;
 
                 let images: Vec<ImageData> = data
                     .iter()
@@ -668,7 +694,7 @@ impl Tool for ImageGenerationTool {
                         let image_bytes = base64::engine::general_purpose::STANDARD
                             .decode(b64_data)
                             .map_err(|e| anyhow::anyhow!("Failed to decode image data: {}", e))?;
-                        
+
                         // Generate unique filename
                         let timestamp = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
@@ -676,21 +702,31 @@ impl Tool for ImageGenerationTool {
                             .as_millis();
                         let filename = format!("image_{}_{}.{}", timestamp, i, img.format);
                         let file_path = images_dir.join(&filename);
-                        
+
                         // Write binary bytes to file
                         std::fs::write(&file_path, &image_bytes)
                             .map_err(|e| anyhow::anyhow!("Failed to write image file: {}", e))?;
-                        
+
                         // Return file path as [IMAGE:/path/to/file]
-                        output.push_str(&format!("[IMAGE:{}]
-", file_path.display()));
+                        output.push_str(&format!(
+                            "[IMAGE:{}]
+",
+                            file_path.display()
+                        ));
                     } else if let Some(ref url) = img.url {
-                        output.push_str(&format!("[IMAGE:{}]
-", url));
+                        output.push_str(&format!(
+                            "[IMAGE:{}]
+",
+                            url
+                        ));
                     }
                     if let Some(ref revised) = response.revised_prompt {
-                        output.push_str(&format!("Revised prompt {}: {}
-", i + 1, revised));
+                        output.push_str(&format!(
+                            "Revised prompt {}: {}
+",
+                            i + 1,
+                            revised
+                        ));
                     }
                 }
 
@@ -724,7 +760,7 @@ mod tests {
     #[test]
     fn test_size_to_aspect_ratio() {
         let tool = ImageGenerationTool::new(MultimodalImageConfig::default(), std::env::temp_dir());
-        
+
         assert_eq!(tool.size_to_aspect_ratio("1024x1024"), "1:1");
         assert_eq!(tool.size_to_aspect_ratio("1792x1024"), "16:9");
         assert_eq!(tool.size_to_aspect_ratio("1024x1792"), "16:9");

@@ -1,16 +1,17 @@
 // Speech Synthesis (TTS) Tool for ZeroClaw
 // Provides text-to-speech capabilities via configured providers
 
-use async_trait::async_trait;
 use super::traits::{Tool, ToolResult};
 use crate::config::schema::MultimodalAudioConfig;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 /// TTS tool name
 pub const TOOL_NAME: &str = "speech_synthesis";
 
 /// TTS tool description
-pub const TOOL_DESCRIPTION: &str = "Convert text to speech using AI-powered text-to-speech providers";
+pub const TOOL_DESCRIPTION: &str =
+    "Convert text to speech using AI-powered text-to-speech providers";
 
 /// Parameters for TTS tool
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,7 +77,10 @@ impl SpeechSynthesisTool {
     }
 
     /// Synthesize speech from text
-    pub async fn synthesize(&self, params: SpeechSynthesisParams) -> anyhow::Result<SpeechSynthesisResponse> {
+    pub async fn synthesize(
+        &self,
+        params: SpeechSynthesisParams,
+    ) -> anyhow::Result<SpeechSynthesisResponse> {
         // Determine provider and model to use
         let provider_name = params
             .provider
@@ -96,15 +100,13 @@ impl SpeechSynthesisTool {
             .or(self.config.default_voice.as_deref())
             .unwrap_or("alloy");
 
-        let format = params
-            .format
-            .as_deref()
-            .unwrap_or("mp3");
+        let format = params.format.as_deref().unwrap_or("mp3");
 
         let speed = params.speed.clamp(0.25, 4.0);
 
         // Build provider-specific payload
-        let payload = self.build_provider_payload(provider_name, model, voice, format, speed, &params.text)?;
+        let payload =
+            self.build_provider_payload(provider_name, model, voice, format, speed, &params.text)?;
 
         // Call the provider
         let audio_data = self
@@ -225,16 +227,10 @@ impl SpeechSynthesisTool {
                 vec![("OpenAI-Beta", "assistants=v2")],
             ),
             "elevenlabs" => (
-                format!(
-                    "https://api.elevenlabs.io/v1/text-to-speech/{}",
-                    voice
-                ),
+                format!("https://api.elevenlabs.io/v1/text-to-speech/{}", voice),
                 vec![],
             ),
-            "coqui" => (
-                "https://api.coqui.ai/v2/tts".to_string(),
-                vec![],
-            ),
+            "coqui" => ("https://api.coqui.ai/v2/tts".to_string(), vec![]),
             "gemini" => (
                 format!(
                     "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
@@ -297,28 +293,28 @@ impl SpeechSynthesisTool {
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = String::new();
-    
+
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as usize;
         let b1 = chunk.get(1).copied().unwrap_or(0) as usize;
         let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
-        
+
         result.push(CHARS[b0 >> 2] as char);
         result.push(CHARS[((b0 & 0x03) << 4) | (b1 >> 4)] as char);
-        
+
         if chunk.len() > 1 {
             result.push(CHARS[((b1 & 0x0f) << 2) | (b2 >> 6)] as char);
         } else {
             result.push('=');
         }
-        
+
         if chunk.len() > 2 {
             result.push(CHARS[b2 & 0x3f] as char);
         } else {
             result.push('=');
         }
     }
-    
+
     result
 }
 
@@ -379,7 +375,10 @@ impl Tool for SpeechSynthesisTool {
             return Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some("Speech synthesis is disabled. Enable it in config.toml: [multimodal.audio]".to_string()),
+                error: Some(
+                    "Speech synthesis is disabled. Enable it in config.toml: [multimodal.audio]"
+                        .to_string(),
+                ),
             });
         }
 
@@ -410,7 +409,7 @@ mod tests {
     #[test]
     fn test_format_to_elevenlabs() {
         let tool = SpeechSynthesisTool::new(MultimodalAudioConfig::default());
-        
+
         assert_eq!(tool.format_to_elevenlabs("mp3"), "mp3_44100_128");
         assert_eq!(tool.format_to_elevenlabs("opus"), "opus_48000");
         assert_eq!(tool.format_to_elevenlabs("aac"), "aac_44100");
@@ -420,7 +419,7 @@ mod tests {
     #[test]
     fn test_format_to_google() {
         let tool = SpeechSynthesisTool::new(MultimodalAudioConfig::default());
-        
+
         assert_eq!(tool.format_to_google("mp3"), "MP3");
         assert_eq!(tool.format_to_google("wav"), "LINEAR16");
         assert_eq!(tool.format_to_google("aac"), "AAC");
