@@ -139,21 +139,36 @@ struct Content {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(untagged)]
-enum Part {
+pub(crate) enum Part {
     Text {
         text: String,
     },
+    /// Inline base64 image data (legacy fallback).
     InlineData {
         #[serde(rename = "inlineData")]
         inline_data: InlineDataPart,
     },
+    /// Uploaded file reference (preferred for Gemini Files API).
+    FileData {
+        #[serde(rename = "fileData")]
+        file_data: FileDataPart,
+    },
 }
 
 #[derive(Debug, Serialize, Clone)]
-struct InlineDataPart {
+pub(crate) struct InlineDataPart {
+    /// MIME type of the image (e.g., "image/png", "image/jpeg").
+    mime_type: String,
+    /// Base64-encoded image data.
+    data: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub(crate) struct FileDataPart {
+    #[serde(rename = "fileUri")]
+    file_uri: String,
     #[serde(rename = "mimeType")]
     mime_type: String,
-    data: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -962,7 +977,74 @@ impl GeminiProvider {
             || error_text.contains("RESOURCE_EXHAUSTED")
     }
 
-    fn parse_inline_image_marker(image_ref: &str) -> Option<InlineDataPart> {
+    /// Upload an image to Gemini's Files API and return the file URI.
+    /// Uses the public API endpoint with the API key from auth.
+    async fn upload_image(&self, image_data: &[u8], mime_type: &str) -> anyhow::Result<String> {
+        let auth = self.auth.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Gemini auth required for image upload")
+        })?;
+
+        let api_key = auth.api_key_credential();
+        if api_key.is_empty() {
+            anyhow::bail!("API key required for image upload");
+        }
+
+        let upload_url = format!(
+            "https://generativelanguage.googleapis.com/upload/v1beta/files?uploadType=multipart&key={}",
+            api_key
+        );
+
+        let client = self.http_client();
+
+        // Build multipart form: metadata + file
+        let metadata = serde_json::json!({
+            "file": {
+                "display_name": "uploaded_image"
+            }
+        });
+
+        let part_metadata = reqwest::multipart::Part::text(metadata.to_string())
+            .mime_str("application/json")
+            .map_err(|e| anyhow::anyhow!("Invalid MIME type: {}", e))?;
+
+        let part_file = reqwest::multipart::Part::bytes(image_data.to_vec())
+            .mime_str(mime_type)
+            .map_err(|e| anyhow::anyhow!("Invalid MIME type: {}", e))?
+            .file_name("image".to_string());
+
+        let form = reqwest::multipart::Form::new()
+            .part("metadata", part_metadata)
+            .part("file", part_file);
+
+        let response = client
+            .post(&upload_url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to upload image to Gemini: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Gemini upload error ({}): {}", status, error_body);
+        }
+
+        let upload_json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse Gemini upload response: {}", e))?;
+
+        let file_uri = upload_json
+            .get("file")
+            .and_then(|f| f.get("uri"))
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Failed to get file URI from Gemini upload response"))?;
+
+        Ok(file_uri.to_string())
+    }
+
+    /// Parse a data URI and extract mime type and decoded data.
+    fn parse_data_uri(image_ref: &str) -> Option<(String, Vec<u8>)> {
         let rest = image_ref.strip_prefix("data:")?;
         let semi_index = rest.find(';')?;
         let mime_type = rest[..semi_index].trim();
@@ -971,18 +1053,22 @@ impl GeminiProvider {
         }
 
         let payload = rest[semi_index + 1..].strip_prefix("base64,")?.trim();
-        if payload.is_empty() {
-            return None;
-        }
+        
+        // Decode base64
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .ok()?;
 
-        Some(InlineDataPart {
-            mime_type: mime_type.to_string(),
-            data: payload.to_string(),
-        })
+        Some((mime_type.to_string(), data))
     }
 
-    fn build_user_parts(content: &str) -> Vec<Part> {
+    /// Build user parts for Gemini content.
+    /// For data URI images: upload to Gemini Files API and use fileData.
+    /// For URLs: keep as text fallback.
+    pub(crate) async fn build_user_parts(&self, content: &str) -> Vec<Part> {
         let (cleaned_text, image_refs) = multimodal::parse_image_markers(content);
+        
         if image_refs.is_empty() {
             return vec![Part::Text {
                 text: content.to_string(),
@@ -995,9 +1081,31 @@ impl GeminiProvider {
         }
 
         for image_ref in image_refs {
-            if let Some(inline_data) = Self::parse_inline_image_marker(&image_ref) {
-                parts.push(Part::InlineData { inline_data });
+            if let Some((mime_type, data)) = Self::parse_data_uri(&image_ref) {
+                // Upload image and get file URI
+                match self.upload_image(&data, &mime_type).await {
+                    Ok(file_uri) => {
+                        parts.push(Part::FileData {
+                            file_data: FileDataPart {
+                                file_uri,
+                                mime_type: mime_type.to_string(),
+                            },
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to upload image, falling back to InlineData");
+                        // Fallback to inline base64 data
+                        let encoded_data = base64::engine::general_purpose::STANDARD.encode(&data);
+                        parts.push(Part::InlineData {
+                            inline_data: InlineDataPart {
+                                mime_type: mime_type.to_string(),
+                                data: encoded_data,
+                            },
+                        });
+                    }
+                }
             } else {
+                // Non-data-URI (URL), keep as text
                 parts.push(Part::Text {
                     text: format!("[IMAGE:{image_ref}]"),
                 });
@@ -1012,9 +1120,7 @@ impl GeminiProvider {
             parts
         }
     }
-}
 
-impl GeminiProvider {
     async fn send_generate_content(
         &self,
         contents: Vec<Content>,
@@ -1252,7 +1358,7 @@ impl Provider for GeminiProvider {
 
         let contents = vec![Content {
             role: Some("user".to_string()),
-            parts: Self::build_user_parts(message),
+            parts: self.build_user_parts(message).await,
         }];
 
         let (text_opt, _usage, _stop_reason, _raw_stop_reason) = self
@@ -1279,7 +1385,7 @@ impl Provider for GeminiProvider {
                 "user" => {
                     contents.push(Content {
                         role: Some("user".to_string()),
-                        parts: Self::build_user_parts(&msg.content),
+                        parts: self.build_user_parts(&msg.content).await,
                     });
                 }
                 "assistant" => {
@@ -1327,7 +1433,7 @@ impl Provider for GeminiProvider {
                 "system" => system_parts.push(&msg.content),
                 "user" => contents.push(Content {
                     role: Some("user".to_string()),
-                    parts: Self::build_user_parts(&msg.content),
+                    parts: self.build_user_parts(&msg.content).await,
                 }),
                 "assistant" => contents.push(Content {
                     role: Some("model".to_string()),
