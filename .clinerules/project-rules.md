@@ -248,6 +248,25 @@ When modifying docs, follow `docs/i18n-guide.md`:
 - Facilitates contributions from international developers
 - Makes debugging and code review easier
 
+## Debugging Rule #0: Use qmd MCP First
+
+When debugging issues or searching for solutions, ALWAYS use the `qmd` MCP tool first before searching through code or reading files.
+
+The qmd knowledge base contains accumulated solutions, past issues, and architectural decisions. This is faster and more reliable than reading source code.
+
+How to use:
+```json
+{
+  "collections": ["zeroclaw"],
+  "searches": [
+    {"type": "lex", "query": "your search terms"},
+    {"type": "vec", "query": "natural language question about the issue"}
+  ]
+}
+```
+
+**This is MANDATORY for all debugging tasks.**
+
 ## Debugging Rule #1: Check Config First
 
 Before modifying ANY code to fix an issue, ALWAYS check if the behavior is configurable first.
