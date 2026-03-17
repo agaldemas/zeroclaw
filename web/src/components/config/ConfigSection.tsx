@@ -6,6 +6,7 @@ import NumberField from './fields/NumberField';
 import ToggleField from './fields/ToggleField';
 import SelectField from './fields/SelectField';
 import TagListField from './fields/TagListField';
+import type { McpServer } from '@/components/config/useConfigForm';
 
 interface Props {
   section: SectionDef;
@@ -13,6 +14,7 @@ interface Props {
   setFieldValue: (sectionPath: string, fieldKey: string, value: unknown) => void;
   isFieldMasked: (sectionPath: string, fieldKey: string) => boolean;
   visibleFields?: FieldDef[];
+  mcpServers: McpServer[];
 }
 
 function renderField(
@@ -45,6 +47,7 @@ export default function ConfigSection({
   setFieldValue,
   isFieldMasked,
   visibleFields,
+  mcpServers,
 }: Props) {
   const [collapsed, setCollapsed] = useState(section.defaultCollapsed ?? false);
   const sectionPanelId = useMemo(
@@ -88,42 +91,69 @@ export default function ConfigSection({
       {!collapsed && (
         <div
           id={sectionPanelId}
-          className="border-t border-gray-800 px-4 py-4 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-4"
+          className="border-t border-gray-800 px-4 py-4"
         >
-          {fields.map((field) => {
-            const value = getFieldValue(section.path, field.key);
-            const masked = isFieldMasked(section.path, field.key);
-            const spanFull = field.type === 'tag-list';
-
-            return (
-              <div key={field.key} className={`flex flex-col${spanFull ? ' sm:col-span-2' : ''}`}>
-                <label className="flex items-center gap-2 text-sm font-medium text-gray-300 mb-1.5">
-                  <span>{field.label}</span>
-                  {field.sensitive && (
-                    <span className="text-[10px] text-yellow-400 bg-yellow-900/30 border border-yellow-800/50 px-1.5 py-0.5 rounded">
-                      sensitive
-                    </span>
-                  )}
-                  {masked && (
-                    <span className="text-[10px] text-blue-400 bg-blue-900/30 border border-blue-800/50 px-1.5 py-0.5 rounded">
-                      masked
-                    </span>
-                  )}
-                </label>
-                {field.description && field.type !== 'text' && field.type !== 'password' && field.type !== 'number' && (
-                  <p className="text-xs text-gray-500 mb-1.5">{field.description}</p>
-                )}
-                <div className="mt-auto">
-                  {renderField(
-                    field,
-                    value,
-                    (v) => setFieldValue(section.path, field.key, v),
-                    masked,
+          {section.path === 'mcp.servers' && mcpServers.length > 0 ? (
+            <div className="divide-y divide-gray-800">
+              {mcpServers.map((server, idx) => (
+                <div key={idx} className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-blue-400">{server.name}</span>
+                  </div>
+                  <div className="mt-1 text-xs text-gray-400">
+                    <span className="text-gray-500">Command:</span> {server.command}
+                  </div>
+                  {server.args.length > 0 && (
+                    <div className="mt-1 text-xs text-gray-400">
+                      <span className="text-gray-500">Args:</span> {server.args.join(' ')}
+                    </div>
                   )}
                 </div>
+              ))}
+              <div className="px-4 py-2 bg-gray-800/30 border-t border-gray-800">
+                <p className="text-xs text-gray-500">
+                  Configure additional MCP servers in Raw mode or directly in config.toml.
+                </p>
               </div>
-            );
-          })}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-4">
+              {fields.map((field) => {
+                const value = getFieldValue(section.path, field.key);
+                const masked = isFieldMasked(section.path, field.key);
+                const spanFull = field.type === 'tag-list';
+
+                return (
+                  <div key={field.key} className={`flex flex-col${spanFull ? ' sm:col-span-2' : ''}`}>
+                    <label className="flex items-center gap-2 text-sm font-medium text-gray-300 mb-1.5">
+                      <span>{field.label}</span>
+                      {field.sensitive && (
+                        <span className="text-[10px] text-yellow-400 bg-yellow-900/30 border border-yellow-800/50 px-1.5 py-0.5 rounded">
+                          sensitive
+                        </span>
+                      )}
+                      {masked && (
+                        <span className="text-[10px] text-blue-400 bg-blue-900/30 border border-blue-800/50 px-1.5 py-0.5 rounded">
+                          masked
+                        </span>
+                      )}
+                    </label>
+                    {field.description && field.type !== 'text' && field.type !== 'password' && field.type !== 'number' && (
+                      <p className="text-xs text-gray-500 mb-1.5">{field.description}</p>
+                    )}
+                    <div className="mt-auto">
+                      {renderField(
+                        field,
+                        value,
+                        (v) => setFieldValue(section.path, field.key, v),
+                        masked,
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

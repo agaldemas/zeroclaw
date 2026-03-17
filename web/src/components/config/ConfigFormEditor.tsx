@@ -16,16 +16,20 @@ const CATEGORY_ORDER = [
   { key: 'advanced', label: 'Advanced' },
 ] as const;
 
+import type { McpServer } from '@/components/config/useConfigForm';
+
 interface Props {
   getFieldValue: (sectionPath: string, fieldKey: string) => unknown;
   setFieldValue: (sectionPath: string, fieldKey: string, value: unknown) => void;
   isFieldMasked: (sectionPath: string, fieldKey: string) => boolean;
+  mcpServers: McpServer[];
 }
 
 export default function ConfigFormEditor({
   getFieldValue,
   setFieldValue,
   isFieldMasked,
+  mcpServers,
 }: Props) {
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('all');
@@ -113,6 +117,7 @@ export default function ConfigFormEditor({
             setFieldValue={setFieldValue}
             isFieldMasked={isFieldMasked}
             visibleFields={fields}
+            mcpServers={mcpServers}
           />
         ))
       )}

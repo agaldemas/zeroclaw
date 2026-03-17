@@ -979,12 +979,22 @@ export const CONFIG_SECTIONS: SectionDef[] = [
     path: 'mcp',
     category: 'advanced',
     title: 'MCP',
-    description: 'Model Context Protocol servers',
+    description: 'Model Context Protocol servers. Servers must be configured manually in config.toml - the form UI does not support array definitions.',
     icon: Plug,
     defaultCollapsed: true,
     fields: [
       { key: 'enabled', label: 'Enabled', type: 'toggle', defaultValue: false },
     ],
+  },
+  // ── MCP Servers ───────────────────────────────────────────────────
+  {
+    path: 'mcp.servers',
+    category: 'advanced',
+    title: 'MCP Servers',
+    description: 'Configured MCP Servers (read-only)',
+    icon: Server,
+    defaultCollapsed: false,
+    fields: [], // Will be dynamically rendered
   },
 
   // ── Wasm ──────────────────────────────────────────────────────────

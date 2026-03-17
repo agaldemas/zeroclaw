@@ -2483,12 +2483,81 @@ pub async fn run_tool_call_loop(
             ordered_results[*idx] = Some((call.name.clone(), call.tool_call_id.clone(), outcome));
         }
 
+        // Helper to flatten JSON output to 2 levels max (reduce context bloat from nested structures)
+        fn flatten_json_output(s: &str) -> String {
+            // Only attempt to parse if it looks like JSON (starts with { or [)
+            let trimmed = s.trim();
+            if !trimmed.starts_with('{') && !trimmed.starts_with('[') {
+                return s.to_string();
+            }
+            match serde_json::from_str::<serde_json::Value>(trimmed) {
+                Ok(value) => {
+                    fn flatten_value(v: &serde_json::Value, depth: usize) -> serde_json::Value {
+                        if depth >= 1 {
+                            // At depth 2+, convert to string representation
+                            serde_json::Value::String(v.to_string())
+                        } else {
+                            match v {
+                                serde_json::Value::Object(map) => {
+                                    let mut new_map = serde_json::Map::new();
+                                    for (k, val) in map {
+                                        new_map.insert(k.clone(), flatten_value(val, depth + 1));
+                                    }
+                                    serde_json::Value::Object(new_map)
+                                }
+                                serde_json::Value::Array(arr) => {
+                                    serde_json::Value::Array(
+                                        arr.iter()
+                                            .map(|item| flatten_value(item, depth + 1))
+                                            .collect(),
+                                    )
+                                }
+                                _ => v.clone(),
+                            }
+                        }
+                    }
+                    flatten_value(&value, 0).to_string()
+                }
+                Err(_) => s.to_string(), // Not valid JSON, return as-is
+            }
+        }
+
+        // Maximum tool output size to prevent LLM context overflow (50KB)
+        const MAX_TOOL_OUTPUT_SIZE: usize = 50 * 1024;
+
+        fn truncate_output(s: &str, max_size: usize) -> String {
+            if s.len() <= max_size {
+                return s.to_string();
+            }
+            format!(
+                "{}\n\n[Output truncated - original size: {} chars]",
+                &s[..max_size],
+                s.len()
+            )
+        }
+
         for (tool_name, tool_call_id, outcome) in ordered_results.into_iter().flatten() {
-            individual_results.push((tool_call_id, outcome.output.clone()));
+            // DEBUG: Log tool output size before and after flatten
+            eprintln!(
+                "[TOOL_DEBUG] {} - raw size: {} chars (~{} tokens)",
+                tool_name,
+                outcome.output.len(),
+                outcome.output.len() / 4
+            );
+            let flattened_output = flatten_json_output(&outcome.output);
+            let truncated_output = truncate_output(&flattened_output, MAX_TOOL_OUTPUT_SIZE);
+            eprintln!(
+                "[TOOL_DEBUG] {} - flattened size: {} chars (~{} tokens), truncated: {}",
+                tool_name,
+                flattened_output.len(),
+                flattened_output.len() / 4,
+                truncated_output.len() < flattened_output.len()
+            );
+            individual_results.push((tool_call_id, truncated_output.clone()));
             let _ = writeln!(
                 tool_results,
                 "<tool_result name=\"{}\">\n{}\n</tool_result>",
-                tool_name, outcome.output
+                tool_name, truncated_output
             );
         }
 
@@ -2496,7 +2565,7 @@ pub async fn run_tool_call_loop(
         // Native mode: use JSON-structured messages so convert_messages() can
         // reconstruct proper OpenAI-format tool_calls and tool result messages.
         // Prompt mode: use XML-based text format as before.
-        history.push(ChatMessage::assistant(assistant_history_content));
+        history.push(ChatMessage::assistant(assistant_history_content.clone()));
         if native_tool_calls.is_empty() {
             let all_results_have_ids = use_native_tools
                 && !individual_results.is_empty()
@@ -2529,6 +2598,42 @@ pub async fn run_tool_call_loop(
         // ── Loop detection: check verdict ────────────────────────
         match loop_detector.check() {
             DetectionVerdict::Continue => {}
+            DetectionVerdict::UseCachedResult {
+                tool_name,
+                args_sig,
+                cached_output,
+                cached_success,
+            } => {
+                runtime_trace::record_event(
+                    "loop_detected_cached_result",
+                    Some(channel_name),
+                    Some(provider_name),
+                    Some(active_model.as_str()),
+                    Some(&turn_id),
+                    Some(cached_success),
+                    Some("loop persisted, returning cached output"),
+                    serde_json::json!({
+                        "iteration": iteration + 1,
+                        "tool": &tool_name,
+                        "args_sig": &args_sig,
+                    }),
+                );
+                // Use cached output instead of making a new call
+                individual_results.clear();
+                ordered_results = vec![Some((
+                    tool_name.clone(),
+                    None,
+                    ToolExecutionOutcome {
+                        output: cached_output,
+                        success: cached_success,
+                        error_reason: None,
+                        duration: Duration::ZERO,
+                    },
+                ))];
+                // Add the assistant message with tool calls
+                history.push(ChatMessage::assistant(assistant_history_content.clone()));
+                break;
+            }
             DetectionVerdict::InjectWarning(warning) => {
                 runtime_trace::record_event(
                     "loop_detected_warning",

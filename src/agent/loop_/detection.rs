@@ -44,23 +44,35 @@ impl Default for LoopDetectionConfig {
 // ─── Verdict ─────────────────────────────────────────────────────────────────
 
 /// Action the caller should take after `LoopDetector::check()`.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) enum DetectionVerdict {
     /// No loop detected — proceed normally.
     Continue,
     /// First detection — inject this self-correction prompt, then continue.
     InjectWarning(String),
+    /// Pattern persisted after warning — use cached output from previous iteration.
+    /// This allows the loop to continue but returns the same output as before,
+    /// breaking the infinite loop while providing a valid response.
+    UseCachedResult {
+        tool_name: String,
+        args_sig: String,
+        cached_output: String,
+        cached_success: bool,
+    },
     /// Pattern persisted after warning — terminate the loop.
     HardStop(String),
 }
 
 // ─── Internal record ─────────────────────────────────────────────────────────
 
-struct CallRecord {
-    tool_name: String,
-    args_sig: String,
-    result_hash: u64,
-    success: bool,
+#[derive(Clone)]
+pub(crate) struct CallRecord {
+    pub tool_name: String,
+    pub args_sig: String,
+    pub result_hash: u64,
+    /// Full output text, stored for cache retrieval when loop is detected.
+    pub output: String,
+    pub success: bool,
 }
 
 // ─── Detector ────────────────────────────────────────────────────────────────
@@ -94,6 +106,7 @@ impl LoopDetector {
             tool_name: tool_name.to_owned(),
             args_sig: args_sig.to_owned(),
             result_hash,
+            output: output.to_owned(),
             success,
         });
 
@@ -118,6 +131,18 @@ impl LoopDetector {
             None => DetectionVerdict::Continue,
             Some(msg) => {
                 if self.warning_injected {
+                    // Try to find a cached result for the last tool call in history
+                    if let Some(last) = self.history.last() {
+                        if let Some(cached) = self.find_cached_result(&last.tool_name, &last.args_sig)
+                        {
+                            return DetectionVerdict::UseCachedResult {
+                                tool_name: cached.tool_name,
+                                args_sig: cached.args_sig,
+                                cached_output: cached.output,
+                                cached_success: cached.success,
+                            };
+                        }
+                    }
                     DetectionVerdict::HardStop(msg)
                 } else {
                     self.warning_injected = true;
@@ -125,6 +150,20 @@ impl LoopDetector {
                 }
             }
         }
+    }
+
+    /// Publicly accessible cache lookup.
+    pub fn find_cached_result(&self, tool_name: &str, args_sig: &str) -> Option<CallRecord> {
+        self.history
+            .iter()
+            .rev()
+            .find(|r| r.tool_name == tool_name && r.args_sig == args_sig)
+            .cloned()
+    }
+
+    /// Get the last tool output from history for cache retrieval.
+    pub fn get_last_output(&self) -> Option<String> {
+        self.history.last().map(|r| r.output.clone())
     }
 
     // ── Strategy 1: no-progress repeat ───────────────────────────────────
@@ -294,21 +333,23 @@ mod tests {
         assert_eq!(det.check(), DetectionVerdict::Continue);
     }
 
-    // 4. Warning then continued loop → HardStop
+    // 4. Warning then continued loop → UseCachedResult
     #[test]
-    fn warning_then_continued_loop_triggers_hard_stop() {
+    fn warning_then_continued_loop_uses_cached_result() {
         let mut det = LoopDetector::new(default_config());
         for _ in 0..3 {
-            det.record_call("echo", r#"{"msg":"hi"}"#, "same", true);
+            det.record_call("echo", r#"{"msg":"hi"}"#, "same_output", true);
         }
         assert!(matches!(det.check(), DetectionVerdict::InjectWarning(_)));
         // One more identical call
-        det.record_call("echo", r#"{"msg":"hi"}"#, "same", true);
+        det.record_call("echo", r#"{"msg":"hi"}"#, "same_output", true);
         match det.check() {
-            DetectionVerdict::HardStop(msg) => {
-                assert!(msg.contains("no progress"), "msg: {msg}");
+            DetectionVerdict::UseCachedResult {
+                cached_output, ..
+            } => {
+                assert_eq!(cached_output, "same_output");
             }
-            other => panic!("expected HardStop, got {other:?}"),
+            other => panic!("expected UseCachedResult, got {other:?}"),
         }
     }
 
@@ -409,5 +450,46 @@ mod tests {
         let mixed = "a".repeat(4094) + "文文"; // 4094 + 6 = 4100 bytes, boundary at 4096
         let hash3 = super::hash_output(&mixed);
         assert!(hash3 != 0); // Just verify it runs
+    }
+
+    #[test]
+    fn use_cached_result_when_identical_call_detected() {
+        let mut det = LoopDetector::new(default_config());
+        // 3 identical calls (default threshold)
+        for _ in 0..3 {
+            det.record_call(
+                "geocode",
+                r#"{"address":"Paris"}"#,
+                "lat:48.85, lng:2.35",
+                true,
+            );
+        }
+
+        // First check after reaching threshold -> InjectWarning
+        match det.check() {
+            DetectionVerdict::InjectWarning(_) => { /* expected */ }
+            other => panic!("expected warning, got {other:?}"),
+        }
+
+        // Additional identical call
+        det.record_call(
+            "geocode",
+            r#"{"address":"Paris"}"#,
+            "lat:48.85, lng:2.35",
+            true,
+        );
+
+        // Second check after warning -> UseCachedResult
+        match det.check() {
+            DetectionVerdict::UseCachedResult {
+                cached_output,
+                tool_name,
+                ..
+            } => {
+                assert_eq!(cached_output, "lat:48.85, lng:2.35");
+                assert_eq!(tool_name, "geocode");
+            }
+            other => panic!("expected cached result, got {other:?}"),
+        }
     }
 }

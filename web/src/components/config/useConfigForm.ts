@@ -1,8 +1,14 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { parse, stringify } from 'smol-toml';
 import { getConfig, putConfig } from '@/lib/api';
 
 const MASKED = '***MASKED***';
+
+export interface McpServer {
+  name: string;
+  command: string;
+  args: string[];
+}
 
 type ParsedConfig = Record<string, unknown>;
 
@@ -59,6 +65,49 @@ function setNestedValue(obj: Record<string, unknown>, segments: string[], value:
   }
 }
 
+/** Extract MCP servers from raw TOML using regex (since smol-toml doesn't support [[tables]]) */
+function extractMcpServers(rawToml: string): McpServer[] {
+  const servers: McpServer[] = [];
+  
+  // Handle JSON-encoded TOML: convert literal \n to actual newlines
+  const normalizedToml = rawToml.replace(/\\n/g, '\n');
+  
+  // Use global regex to find all [[mcp.servers]] blocks
+  // Each block is delimited by the next [[mcp.servers]] or another section like [wasm]
+  const regex = /\[\[mcp\.servers\]\][\s\S]*?(?=\[\[mcp\.servers\]\]|\[wasm\]|$)/g;
+  const matches = normalizedToml.match(regex);
+  
+  if (!matches) return servers;
+  
+  for (const block of matches) {
+    const server: McpServer = { name: '', command: '', args: [] };
+    
+    // Extract name (no ^ anchor - can be anywhere in block)
+    const nameMatch = block.match(/name\s*=\s*"([^"]+)"/);
+    if (nameMatch) server.name = nameMatch[1];
+    
+    // Extract command
+    const cmdMatch = block.match(/command\s*=\s*"([^"]+)"/);
+    if (cmdMatch) server.command = cmdMatch[1];
+    
+    // Extract args (can be single string or array)
+    const argsMatch = block.match(/args\s*=\s*\[([^\]]+)\]/);
+    if (argsMatch) {
+      const argsStr = argsMatch[1];
+      const argMatches = argsStr.match(/"[^"]+"/g);
+      if (argMatches) {
+        server.args = argMatches.map(a => a.replace(/"/g, ''));
+      }
+    }
+    
+    if (server.name) {
+      servers.push(server);
+    }
+  }
+  
+  return servers;
+}
+
 export type EditorMode = 'form' | 'raw';
 
 export interface ConfigFormState {
@@ -69,6 +118,7 @@ export interface ConfigFormState {
   mode: EditorMode;
   rawToml: string;
   parsed: ParsedConfig;
+  mcpServers: McpServer[];
   maskedPaths: Set<string>;
   dirtyPaths: Set<string>;
   setMode: (mode: EditorMode) => boolean;
@@ -90,6 +140,7 @@ export function useConfigForm(): ConfigFormState {
   const [mode, setModeState] = useState<EditorMode>('form');
   const [rawToml, setRawTomlState] = useState('');
   const [parsed, setParsed] = useState<ParsedConfig>({});
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
   const maskedPathsRef = useRef<Set<string>>(new Set());
   const dirtyPathsRef = useRef<Set<string>>(new Set());
   const successTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -100,8 +151,15 @@ export function useConfigForm(): ConfigFormState {
     setError(null);
     try {
       const data = await getConfig();
-      const raw = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+      const raw = typeof data === 'string' ? data : (data.content || JSON.stringify(data, null, 2));
+      console.log('[MCP] Raw TOML length:', raw.length);
+      console.log('[MCP] Contains [[mcp.servers]]:', raw.includes('[[mcp.servers]]'));
       setRawTomlState(raw);
+
+      // Extract MCP servers from raw TOML (before parsing fails)
+      const servers = extractMcpServers(raw);
+      console.log('[MCP] Extracted servers:', JSON.stringify(servers));
+      setMcpServers(servers);
 
       try {
         const obj = parse(raw) as ParsedConfig;
@@ -208,6 +266,8 @@ export function useConfigForm(): ConfigFormState {
         const masked = new Set<string>();
         scanMasked(obj, '', masked);
         maskedPathsRef.current = masked;
+        // Also re-extract MCP servers
+        setMcpServers(extractMcpServers(raw));
         return true;
       } catch {
         return false;
@@ -242,6 +302,8 @@ export function useConfigForm(): ConfigFormState {
 
   const setRawToml = useCallback((raw: string) => {
     setRawTomlState(raw);
+    // Also update MCP servers when raw TOML changes
+    setMcpServers(extractMcpServers(raw));
   }, []);
 
   const save = useCallback(async () => {
@@ -292,6 +354,7 @@ export function useConfigForm(): ConfigFormState {
     mode,
     rawToml,
     parsed,
+    mcpServers,
     maskedPaths: maskedPathsRef.current,
     dirtyPaths: dirtyPathsRef.current,
     setMode,

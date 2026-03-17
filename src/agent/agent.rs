@@ -724,6 +724,36 @@ impl Agent {
             // ── Loop detection: check verdict ────────────────────
             match loop_detector.check() {
                 DetectionVerdict::Continue => {}
+                DetectionVerdict::UseCachedResult {
+                    cached_output,
+                    ..
+                } => {
+                    let results = vec![crate::providers::ToolResultMessage {
+                        content: cached_output.clone(),
+                        tool_call_id: String::new(), // We don't have the call ID in this context
+                    }];
+                    self.history
+                        .push(ConversationMessage::ToolResults(results));
+                    // ── Post-turn fact extraction (cache hit) ─────────
+                    if self.auto_save {
+                        self.turn_buffer.push(user_message, &cached_output);
+                        if self.turn_buffer.should_extract() {
+                            let turns = self.turn_buffer.drain_for_extraction();
+                            let result = extract_facts_from_turns(
+                                self.provider.as_ref(),
+                                &self.model_name,
+                                &turns,
+                                self.memory.as_ref(),
+                                self.session_id.as_deref(),
+                            )
+                            .await;
+                            if result.stored > 0 || result.no_facts {
+                                self.turn_buffer.mark_extract_success();
+                            }
+                        }
+                    }
+                    continue;
+                }
                 DetectionVerdict::InjectWarning(warning) => {
                     self.history
                         .push(ConversationMessage::Chat(ChatMessage::user(warning)));
