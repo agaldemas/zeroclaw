@@ -1882,26 +1882,30 @@ mod tests {
         assert!(json.contains("\"maxOutputTokens\":8192"));
     }
 
-    #[test]
-    fn build_user_parts_text_only_is_backward_compatible() {
+    #[tokio::test]
+    async fn build_user_parts_text_only_is_backward_compatible() {
+        let provider = test_provider(Some(GeminiAuth::ExplicitKey("test-key".into())));
         let content = "Plain text message without image markers.";
-        let parts = GeminiProvider::build_user_parts(content);
+        let parts = provider.build_user_parts(content).await;
         assert_eq!(parts.len(), 1);
         match &parts[0] {
             Part::Text { text } => assert_eq!(text, content),
             Part::InlineData { .. } => panic!("text-only message must stay text-only"),
+            Part::FileData { .. } => panic!("text-only message must stay text-only"),
         }
     }
 
-    #[test]
-    fn build_user_parts_single_image() {
-        let parts = GeminiProvider::build_user_parts(
-            "Describe this image [IMAGE:data:image/png;base64,aGVsbG8=]",
-        );
+    #[tokio::test]
+    async fn build_user_parts_single_image() {
+        let provider = test_provider(Some(GeminiAuth::ExplicitKey("test-key".into())));
+        let parts = provider
+            .build_user_parts("Describe this image [IMAGE:data:image/png;base64,aGVsbG8=]")
+            .await;
         assert_eq!(parts.len(), 2);
         match &parts[0] {
             Part::Text { text } => assert_eq!(text, "Describe this image"),
             Part::InlineData { .. } => panic!("first part should be text"),
+            Part::FileData { .. } => panic!("first part should be text"),
         }
         match &parts[1] {
             Part::InlineData { inline_data } => {
@@ -1909,23 +1913,28 @@ mod tests {
                 assert_eq!(inline_data.data, "aGVsbG8=");
             }
             Part::Text { .. } => panic!("second part should be inline image data"),
+            Part::FileData { .. } => panic!("second part should be inline image data"),
         }
     }
 
-    #[test]
-    fn build_user_parts_multiple_images() {
-        let parts = GeminiProvider::build_user_parts(
-            "Compare [IMAGE:data:image/png;base64,aQ==] and [IMAGE:data:image/jpeg;base64,ag==]",
-        );
+    #[tokio::test]
+    async fn build_user_parts_multiple_images() {
+        let provider = test_provider(Some(GeminiAuth::ExplicitKey("test-key".into())));
+        let parts = provider
+            .build_user_parts("Compare [IMAGE:data:image/png;base64,aQ==] and [IMAGE:data:image/jpeg;base64,ag==]")
+            .await;
         assert_eq!(parts.len(), 3);
         assert!(matches!(parts[0], Part::Text { .. }));
         assert!(matches!(parts[1], Part::InlineData { .. }));
         assert!(matches!(parts[2], Part::InlineData { .. }));
     }
 
-    #[test]
-    fn build_user_parts_image_only() {
-        let parts = GeminiProvider::build_user_parts("[IMAGE:data:image/webp;base64,YWJjZA==]");
+    #[tokio::test]
+    async fn build_user_parts_image_only() {
+        let provider = test_provider(Some(GeminiAuth::ExplicitKey("test-key".into())));
+        let parts = provider
+            .build_user_parts("[IMAGE:data:image/webp;base64,YWJjZA==]")
+            .await;
         assert_eq!(parts.len(), 1);
         match &parts[0] {
             Part::InlineData { inline_data } => {
@@ -1933,20 +1942,26 @@ mod tests {
                 assert_eq!(inline_data.data, "YWJjZA==");
             }
             Part::Text { .. } => panic!("image-only message should create inline image part"),
+            Part::FileData { .. } => panic!("image-only message should create inline image part"),
         }
     }
 
-    #[test]
-    fn build_user_parts_fallback_for_non_data_uri_markers() {
-        let parts = GeminiProvider::build_user_parts("Inspect [IMAGE:https://example.com/img.png]");
+    #[tokio::test]
+    async fn build_user_parts_fallback_for_non_data_uri_markers() {
+        let provider = test_provider(Some(GeminiAuth::ExplicitKey("test-key".into())));
+        let parts = provider
+            .build_user_parts("Inspect [IMAGE:https://example.com/img.png]")
+            .await;
         assert_eq!(parts.len(), 2);
         match &parts[0] {
             Part::Text { text } => assert_eq!(text, "Inspect"),
             Part::InlineData { .. } => panic!("first part should be text"),
+            Part::FileData { .. } => panic!("first part should be text"),
         }
         match &parts[1] {
             Part::Text { text } => assert_eq!(text, "[IMAGE:https://example.com/img.png]"),
             Part::InlineData { .. } => panic!("invalid markers should fall back to text"),
+            Part::FileData { .. } => panic!("invalid markers should fall back to text"),
         }
     }
 
