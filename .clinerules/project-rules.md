@@ -1,8 +1,10 @@
 # ZeroClaw Development & Debugging Guide
 
-This document contains instructions for running ZeroClaw in development mode, debugging, and troubleshooting common issues.
+> **📌 Note**: This file complements `../../Cline/Rules/global-rules.md`. Global rules (MCP tools, generic debugging, code guidelines) are defined there. This file contains only ZeroClaw-specific content.
 
-## Running ZeroClaw in Debug Mode
+---
+
+## 🚀 Running ZeroClaw in Development
 
 ### Quick Start (Recommended)
 
@@ -21,14 +23,7 @@ This starts everything:
 - ✅ Scheduler
 - ✅ Logs redirected to `./logs/zeroclaw-daemon.log`
 
-**Important**: Use `set -a && source .env && set +a` to export all variables from `.env` to subprocesses. This is critical for transcription features that read `GEMINI_API_KEY` and other provider keys.
-
-**Why this matters:**
-- When you run `cargo run`, it spawns a subprocess to compile and execute your code
-- By default, `source .env` only exports variables to the current shell session
-- `set -a` (auto-export mode) marks all variables for export, so child processes inherit them
-- Without this, `GEMINI_API_KEY` won't be available to the transcription code running in the subprocess
-- Using `.envrc` with `direnv` is an alternative (auto-exports when entering the directory)
+**Important**: Use `set -a && source .env && set +a` to export all variables from `.env` to subprocesses.
 
 To follow logs in real-time:
 ```bash
@@ -37,7 +32,7 @@ tail -f logs/zeroclaw-daemon.log
 
 ### Gateway Only (Advanced)
 
-If you only need the gateway without daemon features (no channels, scheduling, etc.):
+If you only need the gateway without daemon features:
 
 ```bash
 cd /Users/alaingaldemas/Documents/agentic/zeroclaw
@@ -47,41 +42,14 @@ RUST_LOG=debug cargo run --bin zeroclaw -- gateway
 
 ### Environment Variables
 
-ZeroClaw requires environment variables for API keys. There are several ways to provide them:
-
-#### Option 1: Source .env file
-
-```bash
-set -a && source .env && set +a
-cargo run --bin zeroclaw -- <command>
-```
-
-**Important**: The `set -a` command exports all variables defined in `.env` to the environment, making them available to child processes (like `cargo run`). This is required for transcription features to work properly.
-
-**Why `set -a` is necessary in development/debug:**
-- The `.env` file typically contains API keys (GEMINI_API_KEY, GROQ_API_KEY, etc.)
-- When cargo runs your code, it does so in a **child process**
-- Without `set -a`, the child process won't see the variables from `.env` even if the parent shell does
-- This is especially important for transcription because it runs async HTTP requests to Google's API
-- Using `.envrc` with direnv is recommended as an alternative that handles this automatically
-
-#### Option 2: Set variables directly
-
-```bash
-export GEMINI_API_KEY="your-api-key-here"
-cargo run --bin zeroclaw -- <command>
-```
-
-### Key Environment Variables
+ZeroClaw-specific environment variables:
 
 | Variable | Usage | Required For |
 |----------|-------|--------------|
 | `GEMINI_API_KEY` | Google Gemini API key | Gemini provider |
-| `ZEROCLAW_API_KEY` | Generic API key override | All providers (overrides config) |
+| `ZEROCLAW_API_KEY` | Generic API key override | All providers (detected by `zeroclaw doctor`) |
 | `API_KEY` | Fallback generic key | All providers |
 | `PROVIDER` | Default provider | Setting default provider |
-
-**Note**: `ZEROCLAW_API_KEY` is detected by `zeroclaw doctor` and will make the "no api_key set" warning disappear. `GEMINI_API_KEY` works at runtime but is not detected by the doctor command.
 
 ### Port Management
 
@@ -117,144 +85,85 @@ Expected output should show:
 | `⚠️ no channels configured` | No messaging channels set up | Run `zeroclaw onboard` if needed |
 | `❌ state file not found` | Daemon not running | Start with `zeroclaw daemon` |
 
-## Understanding the Warning: "no api_key set"
+---
 
-The `zeroclaw doctor` command checks only `config.api_key` in config.toml — it does NOT check environment variables.
+## 🔧 Development Workflow
 
-**However, your API key will still work!** The provider (e.g., Gemini) reads `GEMINI_API_KEY` directly at runtime via `std::env::var()`.
-
-This is a false positive. To make the warning disappear:
-
-1. Add `api_key` to config.toml (with encryption):
-   ```bash
-   zeroclaw config set api_key "your-key"
-   ```
-
-2. Or add `ZEROCLAW_API_KEY` to your .env (this IS detected by doctor):
-   ```
-   ZEROCLAW_API_KEY=your-key
-   ```
-
-## Secure API Key Storage
-
-For production, use ZeroClaw's encrypted SecretStore:
-
-1. The secret is encrypted with ChaCha20-Poly1305
-2. Encryption key stored in `~/.zeroclaw/.secret_key` (permissions 0600)
-3. Config stores only ciphertext (format: `enc2:...`)
-
-Enable in config.toml:
-```toml
-[secrets]
-encrypt = true
-```
-
-Then set your API key — it will be automatically encrypted:
-```bash
-zeroclaw config set api_key "your-gemini-key"
-```
-
-## Log Files
-
-Debug logs are redirected to `./logs/zeroclaw-daemon.log` when running the daemon with `tee`. For other processes, check:
-- Terminal output where you started the command
-- `zeroclaw_agent.log` in the workspace directory
-
-## Testing Configuration Changes
+### Testing Configuration Changes
 
 When modifying config.toml or testing fixes, follow this workflow:
 
-### 1. Kill existing daemon
+#### 1. Kill existing daemon
 ```bash
 lsof -ti :42617 | xargs kill -9
 ```
 
-### 2. Start daemon in background with logs
+#### 2. Start daemon in background with logs
 ```bash
 cd /Users/alaingaldemas/Documents/agentic/zeroclaw
 set -a && source .env && set +a
 RUST_LOG=debug cargo run --bin zeroclaw -- daemon 2>&1 | tee -a logs/zeroclaw-daemon.log &
 ```
 
-### 3. Verify daemon started successfully
+#### 3. Verify daemon started successfully
 Look for these indicators in the logs:
 - ✅ Config loaded
 - ✅ ZeroClaw daemon started
 - ✅ Gateway listening on http://127.0.0.1:42617
-- ✅ Telegram channel listening for messages
 
-### 4. Follow logs in real-time
+#### 4. Follow logs in real-time
 ```bash
 tail -f logs/zeroclaw-daemon.log
 ```
-Or open the log file directly in the editor.
 
-## Planning and Architecture Guidelines
+### Code Change Workflow (Mandatory)
 
-**When creating plans, technical documents, or architectural proposals, you MUST consult and follow the relevant protocol files.**
+After ANY source code modification (`.rs` files) OR config file modification (`config.toml`), you MUST follow this workflow:
 
-### Priority Order:
+#### 1. Build the project (for code changes only)
+```bash
+cargo build --bin zeroclaw
+```
 
-1. **`AGENTS.md`** - Primary protocol for coding agents (Codex/Cline)
-   - Section 0: Session targets and clean worktree requirements
-   - Section 6: Agent workflow and validation
-   - Section 6.1: Branch/PR flow
-   - Section 6.2: Worktree workflow
-   - Section 8: Validation matrix
+#### 2. Restart the daemon
+```bash
+lsof -ti :42617 | xargs kill -9 2>/dev/null
+sleep 1
 
-2. **`CLAUDE.md`** - Architecture and engineering principles
-   - Section 3: Engineering Principles (KISS, YAGNI, SRP, etc.)
-   - Section 6.4: Architecture Boundary Contract
-   - Section 7: Change Playbooks (how to properly add providers, channels, tools)
+cd /Users/alaingaldemas/Documents/agentic/zeroclaw
+set -a && source .env && set +a
+RUST_LOG=debug cargo run --bin zeroclaw -- daemon 2>&1 | tee -a logs/zeroclaw-daemon.log &
+```
 
-3. **`CONTRIBUTING.md`** - Contribution guidelines and PR requirements
+#### 3. Verify daemon started
+- ✅ Config loaded
+- ✅ ZeroClaw daemon started
+- ✅ Gateway listening on http://127.0.0.1:42617
 
-### Key Rules Before Proposing Any Plan:
+**Why this is mandatory:**
+- **Code changes**: ZeroClaw is a compiled Rust binary. Modifying source code does NOT automatically update the running process.
+- **Config changes**: The daemon reads config.toml at startup. Modifications require a restart to take effect.
 
-1. **Always use a clean worktree** - Create a new git worktree for each task (see AGENTS.md Section 0.1)
-2. **Run `search_files`** - Verify the feature doesn't already exist
-3. **Check trait definitions** - Inspect `src/providers/traits.rs`, `src/channels/traits.rs`, `src/tools/traits.rs`
-4. **Use generic references** - Say "Any Configured Provider" not "OpenAI"
-5. **One concern per PR** - Avoid mixed feature+refactor+infra patches
-6. **Validate by risk tier** - Follow validation matrix in AGENTS.md Section 8
-7. **Document impact** - Include behavior changes, risks, and rollback plan
+**Exception:** If the user explicitly states "don't restart", then skip the restart step.
 
-### Documentation System Rules
+### Anti-Pattern: Build-Only Without Restart
 
-When modifying docs, follow `docs/i18n-guide.md`:
-- Keep multilingual entry-point parity (en, zh-CN, ja, ru, fr, vi, el)
-- Update all locale hubs when changing navigation
-- Follow the i18n completion checklist before merge
+❌ **WRONG**: "Build succeeded, code change complete!"
 
-## Code Language Guidelines
+✅ **CORRECT**: "Build succeeded, daemon restarted on port 42617, changes are now active."
 
-### Comments
+Always complete the full workflow — build + restart + verify.
 
-- **Always write comments in English** in the source code
-- Comments should be clear, concise, and explain the "why" not the "what"
-- Use proper English grammar and spelling
+---
 
-### Strings and User-Facing Text
+## 🐛 Debugging ZeroClaw
 
-- **All strings in code must be in English (UTF-8)**
-- This includes error messages, log messages, UI text, and any user-facing content
-- Do not use non-English characters or localized strings in the source code
-- Localization should be handled through separate i18n files, not inline in the code
-
-### Rationale
-
-- English is the standard language for code collaboration in open source projects
-- Keeping strings in English ensures consistency across the codebase
-- Facilitates contributions from international developers
-- Makes debugging and code review easier
-
-## Debugging Rule #0: Use qmd MCP First
+### Debugging Rule #0: Use qmd MCP First
 
 When debugging issues or searching for solutions, ALWAYS use the `qmd` MCP tool first before searching through code or reading files.
 
 The qmd knowledge base contains accumulated solutions, past issues, and architectural decisions. This is faster and more reliable than reading source code.
 
-How to use:
 ```json
 {
   "collections": ["zeroclaw"],
@@ -267,13 +176,13 @@ How to use:
 
 **This is MANDATORY for all debugging tasks.**
 
-## Debugging Rule #1: Check Config First
+### Debugging Rule #1: Check Config First
 
 Before modifying ANY code to fix an issue, ALWAYS check if the behavior is configurable first.
 
 ZeroClaw has extensive configuration options in `config.toml`. Many behaviors that seem like bugs can be solved by config changes instead of code changes.
 
-### How to Apply
+#### How to Apply
 
 1. **Check the actual config** - Review the user's config file:
    ```
@@ -293,19 +202,19 @@ ZeroClaw has extensive configuration options in `config.toml`. Many behaviors th
 
 4. **Only then consider code changes** - If no config option exists, THEN consider a code fix.
 
-### Recent Example (What NOT To Do)
+#### Recent Example (What NOT To Do)
 
 **Problem:** Image generation output was being redacted by security guardrail.
 
-**Wrong approach:** Modify `src/security/leak_detector.rs` to change behavior.
+❌ **Wrong approach**: Modify `src/security/leak_detector.rs` to change behavior.
 
-**Correct approach:** Set in config.toml:
+✅ **Correct approach**: Set in config.toml:
 ```toml
 [security.outbound_leak_guard]
 enabled = false
 ```
 
-### Common Configurable Behaviors
+#### Common Configurable Behaviors
 
 - `security.outbound_leak_guard.sensitivity` - Controls credential leak detection (0.0-1.0)
 - `security.semantic_guard` - Controls AI safety filtering
@@ -313,11 +222,11 @@ enabled = false
 - `[channel].stream_mode` - Controls message streaming
 - `security.perplexity_filter.enable_perplexity_filter` - Adversarial prompt filtering
 
-## Debugging Rule #2: Check The Docs
+### Debugging Rule #2: Check The Docs
 
 ZeroClaw has extensive documentation. BEFORE proposing any fix or claiming something doesn't exist, search the docs.
 
-### Required Doc Searches
+#### Required Doc Searches
 
 When debugging an issue, you MUST check:
 
@@ -336,13 +245,7 @@ When debugging an issue, you MUST check:
 4. **Commands reference** - `docs/commands-reference.md`
    - CLI options that might solve the problem
 
-### Example: "This security feature can't be disabled"
-
-WRONG: "Let me modify the code to add a config option."
-
-CORRECT: Check `docs/config-reference.md` for `[security.outbound_leak_guard]` which has `enabled` and `sensitivity` keys.
-
-### Key Docs Files to Know
+#### Key Docs Files to Know
 
 | Doc | Purpose |
 |-----|----------|
@@ -353,7 +256,7 @@ CORRECT: Check `docs/config-reference.md` for `[security.outbound_leak_guard]` w
 | `docs/providers-reference.md` | Provider configuration |
 | `docs/operations-runbook.md` | Day-2 operations |
 
-## Anti-Pattern: "Let me check the code first"
+### Anti-Pattern: "Let me check the code first"
 
 This is PROHIBITED unless:
 1. Config option doesn't exist AND
@@ -362,44 +265,88 @@ This is PROHIBITED unless:
 
 Always config-first, code-second.
 
-## Code Change Workflow (Mandatory)
+---
 
-After ANY source code modification (`.rs` files) OR config file modification (`config.toml`), you MUST follow this workflow:
+## 📚 Architecture & Planning
 
-### 1. Build the project (for code changes only)
-```bash
-cargo build --bin zeroclaw
+**When creating plans, technical documents, or architectural proposals, you MUST consult and follow the relevant protocol files.**
+
+### Priority Order:
+
+1. **`AGENTS.md`** - Primary protocol for coding agents (Codex/Cline)
+   - Section 0: Session targets and clean worktree requirements
+   - Section 6: Agent workflow and validation
+   - Section 6.1: Branch/PR flow
+   - Section 6.2: Worktree workflow
+   - Section 8: Validation matrix
+
+2. **`CLAUDE.md`** - Architecture and engineering principles
+   - Section 3: Engineering Principles (KISS, YAGNI, SRP, etc.)
+   - Section 6.4: Architecture Boundary Contract
+   - Section 7: Change Playbooks (how to properly add providers, channels, tools)
+
+3. **`CONTRIBUTING.md`** - Contribution guidelines and PR requirements
+
+### Key Rules Before Proposing Any Plan
+
+1. **Always use a clean worktree** - Create a new git worktree for each task (see AGENTS.md Section 0.1)
+2. **Run `search_files`** - Verify the feature doesn't already exist
+3. **Check trait definitions** - Inspect `src/providers/traits.rs`, `src/channels/traits.rs`, `src/tools/traits.rs`
+4. **Use generic references** - Say "Any Configured Provider" not "OpenAI"
+5. **One concern per PR** - Avoid mixed feature+refactor+infra patches
+6. **Validate by risk tier** - Follow validation matrix in AGENTS.md Section 8
+7. **Document impact** - Include behavior changes, risks, and rollback plan
+
+### Documentation System Rules
+
+When modifying docs, follow `docs/i18n-guide.md`:
+- Keep multilingual entry-point parity (en, zh-CN, ja, ru, fr, vi, el)
+- Update all locale hubs when changing navigation
+- Follow the i18n completion checklist before merge
+
+---
+
+## 🔐 Security
+
+### Secure API Key Storage
+
+For production, use ZeroClaw's encrypted SecretStore:
+
+1. The secret is encrypted with ChaCha20-Poly1305
+2. Encryption key stored in `~/.zeroclaw/.secret_key` (permissions 0600)
+3. Config stores only ciphertext (format: `enc2:...`)
+
+Enable in config.toml:
+```toml
+[secrets]
+encrypt = true
 ```
 
-### 2. Restart the daemon automatically
+Then set your API key — it will be automatically encrypted:
 ```bash
-# Kill existing daemon
-lsof -ti :42617 | xargs kill -9 2>/dev/null
-sleep 1
-
-# Start daemon in background with logs
-cd /Users/alaingaldemas/Documents/agentic/zeroclaw
-set -a && source .env && set +a
-RUST_LOG=debug cargo run --bin zeroclaw -- daemon 2>&1 | tee -a logs/zeroclaw-daemon.log &
+zeroclaw config set api_key "your-gemini-key"
 ```
 
-### 3. Verify daemon started
-Check for these indicators:
-- ✅ Config loaded
-- ✅ ZeroClaw daemon started
-- ✅ Gateway listening on http://127.0.0.1:42617
+### Understanding the "no api_key set" Warning
 
-### Why This Is Mandatory
+The `zeroclaw doctor` command checks only `config.api_key` in config.toml — it does NOT check environment variables.
 
-- **Code changes**: ZeroClaw is a compiled Rust binary. Modifying source code does NOT automatically update the running process.
-- **Config changes**: The daemon reads config.toml at startup. Modifications require a restart to take effect.
+**However, your API key will still work!** The provider (e.g., Gemini) reads `GEMINI_API_KEY` directly at runtime via `std::env::var()`.
 
-**Exception:** If the user explicitly states "don't restart" or "leave daemon running", then skip the restart step.
+This is a false positive. To make the warning disappear:
 
-## Anti-Pattern: Build-Only Without Restart
+1. Add `api_key` to config.toml (with encryption):
+   ```bash
+   zeroclaw config set api_key "your-key"
+   ```
 
-WRONG: "Build succeeded, code change complete!"
+2. Or add `ZEROCLAW_API_KEY` to your .env (this IS detected by doctor):
+   ```
+   ZEROCLAW_API_KEY=your-key
+   ```
 
-CORRECT: "Build succeeded, daemon restarted on port 42617, changes are now active."
+### Log Files
 
-Always complete the full workflow — build + restart + verify.
+Debug logs are redirected to `./logs/zeroclaw-daemon.log` when running the daemon with `tee`. For other processes, check:
+- Terminal output where you started the command
+- `zeroclaw_agent.log` in the workspace directory
